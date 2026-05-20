@@ -1,0 +1,54 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"  # weekly on Monday at 06:00 UTC
+
+jobs:
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Filesystem scan (dependencies, configs, IaC)
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          format: "table"
+          ignore-unfixed: true
+
+      # Build and scan backend Docker image
+      - name: Build backend image
+        run: docker build -t travel-expense-backend:scan ./backend
+
+      - name: Trivy scan - backend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "travel-expense-backend:scan"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          format: "table"
+          ignore-unfixed: true
+
+      # Build and scan frontend Docker image
+      - name: Build frontend image
+        run: docker build -t travel-expense-frontend:scan ./frontend
+
+      - name: Trivy scan - frontend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "travel-expense-frontend:scan"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          format: "table"
+          ignore-unfixed: true

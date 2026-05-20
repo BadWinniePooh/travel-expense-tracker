@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    user: "999:999"
+    environment:
+      POSTGRES_DB: travelexpenses
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d travelexpenses"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build: ./backend
+    user: "1001:1001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=travelexpenses;Username=appuser;Password=changeme"
+      Jwt__Secret: "change-me-in-production-min-32-chars!!"
+      Jwt__Issuer: "travel-expense-tracker"
+      Jwt__Audience: "travel-expense-tracker"
+      Jwt__ExpiryMinutes: "60"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "Admin123!"
+      ADMIN_EMAIL: "admin@example.com"
+      ASPNETCORE_URLS: "http://+:8080"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    ports:
+      - "5000:8080"
+
+  frontend:
+    build: ./frontend
+    user: "101:101"
+    depends_on:
+      - backend
+    ports:
+      - "3000:8080"
+
+volumes:
+  pgdata:

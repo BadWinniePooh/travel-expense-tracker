@@ -1,0 +1,20 @@
+# Development overrides — mount source for hot-reload if desired,
+# and expose extra ports for local debugging.
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  backend:
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      Jwt__Secret: "dev-secret-change-me-in-production-min-32-chars!!"
+    # Uncomment to mount source for live compilation:
+    # volumes:
+    #   - ./backend:/src
+
+  frontend:
+    # For local dev you typically run `npm run dev` directly via Vite,
+    # but you can still build/serve via Docker for integration testing.
+    environment:
+      NODE_ENV: development
