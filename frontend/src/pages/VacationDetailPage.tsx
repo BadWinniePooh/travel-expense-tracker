@@ -15,9 +15,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuth } from '@/contexts/AuthContext'
+import { useToast } from '@/hooks/use-toast'
+import { isQueued } from '@/lib/pwa'
 import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight } from 'lucide-react'
 import { format } from 'date-fns'
 import type { ExpenseCategory } from '@/types'
@@ -32,6 +34,7 @@ export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user, isAdmin } = useAuth()
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   const { data: vacation, isLoading } = useQuery({
     queryKey: ['vacation', id],
@@ -76,31 +79,37 @@ export function VacationDetailPage() {
 
   const isCreator = vacation?.createdBy === user?.id
 
+  const offlineToast = () =>
+    toast({ title: 'Saved offline', description: 'Will sync automatically when you reconnect.' })
+
   const createExpenseMutation = useMutation({
     mutationFn: (data: Parameters<typeof createExpense>[1]) => createExpense(id!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
+    onSuccess: (data) => {
       setExpenseDialogOpen(false)
       resetExpenseForm()
+      if (isQueued(data)) { offlineToast(); return }
+      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
+      queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },
   })
 
   const updateExpenseMutation = useMutation({
     mutationFn: ({ expenseId, data }: { expenseId: string; data: Parameters<typeof updateExpense>[2] }) =>
       updateExpense(id!, expenseId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
+    onSuccess: (data) => {
       setExpenseDialogOpen(false)
       setEditExpense(null)
       resetExpenseForm()
+      if (isQueued(data)) { offlineToast(); return }
+      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
+      queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },
   })
 
   const deleteExpenseMutation = useMutation({
     mutationFn: (expenseId: string) => deleteExpense(id!, expenseId),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (isQueued(data)) { offlineToast(); return }
       queryClient.invalidateQueries({ queryKey: ['expenses', id] })
       queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },
@@ -108,30 +117,33 @@ export function VacationDetailPage() {
 
   const addParticipantMutation = useMutation({
     mutationFn: (data: { userId: string; splitWeight: number }) => addParticipant(id!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
+    onSuccess: (data) => {
       setParticipantDialogOpen(false)
       setParticipantUserId('')
       setParticipantWeight('')
+      if (isQueued(data)) { offlineToast(); return }
+      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
+      queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },
   })
 
   const updateParticipantMutation = useMutation({
     mutationFn: ({ userId, splitWeight }: { userId: string; splitWeight: number }) =>
       updateParticipant(id!, userId, { splitWeight }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
+    onSuccess: (data) => {
       setParticipantDialogOpen(false)
       setEditParticipantId(null)
       setParticipantWeight('')
+      if (isQueued(data)) { offlineToast(); return }
+      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
+      queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },
   })
 
   const removeParticipantMutation = useMutation({
     mutationFn: (userId: string) => removeParticipant(id!, userId),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (isQueued(data)) { offlineToast(); return }
       queryClient.invalidateQueries({ queryKey: ['vacation', id] })
       queryClient.invalidateQueries({ queryKey: ['summary', id] })
     },

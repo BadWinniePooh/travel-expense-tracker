@@ -63,6 +63,11 @@ export interface Summary {
   transfers: Transfer[]
 }
 
+// Returned by the service worker when a mutation is queued for offline sync
+export interface QueuedResponse {
+  queued: true
+}
+
 export type ExpenseCategory =
   | 'Accommodation'
   | 'Food'

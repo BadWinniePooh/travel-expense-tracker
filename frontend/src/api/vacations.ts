@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { Vacation, Expense, Summary } from '../types'
+import type { Vacation, Expense, Summary, QueuedResponse } from '../types'
 
 export const getVacations = async (): Promise<Vacation[]> => {
   const { data } = await apiClient.get<Vacation[]>('/vacations')
@@ -44,20 +44,23 @@ export const deleteVacation = async (id: string): Promise<void> => {
 export const addParticipant = async (
   vacationId: string,
   payload: { userId: string; splitWeight: number }
-): Promise<void> => {
-  await apiClient.post(`/vacations/${vacationId}/participants`, payload)
+): Promise<QueuedResponse | void> => {
+  const { data } = await apiClient.post<QueuedResponse | undefined>(`/vacations/${vacationId}/participants`, payload)
+  return data
 }
 
 export const updateParticipant = async (
   vacationId: string,
   userId: string,
   payload: { splitWeight: number }
-): Promise<void> => {
-  await apiClient.put(`/vacations/${vacationId}/participants/${userId}`, payload)
+): Promise<QueuedResponse | void> => {
+  const { data } = await apiClient.put<QueuedResponse | undefined>(`/vacations/${vacationId}/participants/${userId}`, payload)
+  return data
 }
 
-export const removeParticipant = async (vacationId: string, userId: string): Promise<void> => {
-  await apiClient.delete(`/vacations/${vacationId}/participants/${userId}`)
+export const removeParticipant = async (vacationId: string, userId: string): Promise<QueuedResponse | void> => {
+  const { data } = await apiClient.delete<QueuedResponse | undefined>(`/vacations/${vacationId}/participants/${userId}`)
+  return data
 }
 
 // Expenses
@@ -76,8 +79,8 @@ export const createExpense = async (
     category: string
     date: string
   }
-): Promise<Expense> => {
-  const { data } = await apiClient.post<Expense>(`/vacations/${vacationId}/expenses`, payload)
+): Promise<Expense | QueuedResponse> => {
+  const { data } = await apiClient.post<Expense | QueuedResponse>(`/vacations/${vacationId}/expenses`, payload)
   return data
 }
 
@@ -92,16 +95,17 @@ export const updateExpense = async (
     category?: string
     date?: string
   }
-): Promise<Expense> => {
-  const { data } = await apiClient.put<Expense>(
+): Promise<Expense | QueuedResponse> => {
+  const { data } = await apiClient.put<Expense | QueuedResponse>(
     `/vacations/${vacationId}/expenses/${expenseId}`,
     payload
   )
   return data
 }
 
-export const deleteExpense = async (vacationId: string, expenseId: string): Promise<void> => {
-  await apiClient.delete(`/vacations/${vacationId}/expenses/${expenseId}`)
+export const deleteExpense = async (vacationId: string, expenseId: string): Promise<QueuedResponse | void> => {
+  const { data } = await apiClient.delete<QueuedResponse | undefined>(`/vacations/${vacationId}/expenses/${expenseId}`)
+  return data
 }
 
 export const getSummary = async (vacationId: string): Promise<Summary> => {
