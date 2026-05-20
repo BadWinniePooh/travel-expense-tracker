@@ -6,12 +6,13 @@ import { Queue } from 'workbox-background-sync'
 import { CacheableResponsePlugin } from 'workbox-cacheable-response'
 import { ExpirationPlugin } from 'workbox-expiration'
 
-declare const self: ServiceWorkerGlobalScope
-// Injected by vite-plugin-pwa at build time
-declare const __WB_MANIFEST: Array<{ revision: string | null; url: string }>
+declare const self: ServiceWorkerGlobalScope & {
+  __WB_MANIFEST: Array<{ revision: string | null; url: string }>
+}
 
 cleanupOutdatedCaches()
-precacheAndRoute(__WB_MANIFEST)
+// self.__WB_MANIFEST is the literal token workbox-build replaces with the precache list
+precacheAndRoute(self.__WB_MANIFEST)
 
 // API GETs: NetworkFirst — fresh when online, cached copy when offline
 registerRoute(

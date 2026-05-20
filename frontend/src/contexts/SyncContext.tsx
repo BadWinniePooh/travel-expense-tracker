@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { type WorkboxMessageEvent } from 'workbox-window'
 import { wb } from '@/lib/pwa'
 
 interface SyncContextValue {
@@ -36,8 +37,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // When service worker signals sync is complete, refresh all cached queries
   useEffect(() => {
     if (!wb) return
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === 'SYNC_COMPLETE') {
+    const handler = (event: WorkboxMessageEvent) => {
+      if ((event.data as { type?: string })?.type === 'SYNC_COMPLETE') {
         setPendingCount(0)
         queryClient.invalidateQueries()
       }
