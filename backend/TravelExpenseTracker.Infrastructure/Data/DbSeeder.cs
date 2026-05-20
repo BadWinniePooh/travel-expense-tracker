@@ -7,7 +7,11 @@ public static class DbSeeder
 {
     public static async Task SeedAsync(AppDbContext context)
     {
-        await context.Database.MigrateAsync();
+        // EnsureCreated creates the schema from the DbContext model on a
+        // fresh database and is a no-op when tables already exist.
+        // It does not use __EFMigrationsHistory, so it is not affected by
+        // stale migration records left over from failed previous runs.
+        await context.Database.EnsureCreatedAsync();
 
         if (await context.Users.AnyAsync())
             return;
