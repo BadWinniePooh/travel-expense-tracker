@@ -12,8 +12,14 @@ using TravelExpenseTracker.Infrastructure.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Database
+// MigrationsAssembly must be set explicitly: without it EF defaults to the
+// startup assembly (TravelExpenseTracker.API) and never finds the Migration
+// classes that live in TravelExpenseTracker.Infrastructure.
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql => npgsql.MigrationsAssembly("TravelExpenseTracker.Infrastructure")
+    ));
 
 // Repositories
 builder.Services.AddScoped<IUserRepository, UserRepository>();
