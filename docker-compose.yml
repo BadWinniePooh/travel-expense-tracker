@@ -3,6 +3,9 @@
 #   docker compose --profile prd up    → all services, only frontend port exposed
 #
 # Never run both profiles at the same time.
+#
+# Before first run:
+#   cp .env.example .env   # then edit .env with your values
 
 x-postgres-base: &postgres-base
   image: postgres:16-alpine
@@ -11,13 +14,13 @@ x-postgres-base: &postgres-base
   # user (UID 70 on Alpine) automatically. Forcing a non-root user here
   # breaks the init sequence.
   environment:
-    POSTGRES_DB: travelexpenses
-    POSTGRES_USER: appuser
-    POSTGRES_PASSWORD: changeme
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
   volumes:
     - pgdata:/var/lib/postgresql/data
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U appuser -d travelexpenses"]
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
     interval: 10s
     timeout: 5s
     retries: 5
@@ -28,13 +31,13 @@ x-backend-base: &backend-base
   user: "1001:1001"
 
 x-backend-env: &backend-env
-  ConnectionStrings__DefaultConnection: "Host=postgres;Database=travelexpenses;Username=appuser;Password=changeme"
-  Jwt__Issuer: "travel-expense-tracker"
-  Jwt__Audience: "travel-expense-tracker"
-  Jwt__ExpiryMinutes: "60"
-  ADMIN_USERNAME: "admin"
-  ADMIN_PASSWORD: "Admin123!"
-  ADMIN_EMAIL: "admin@example.com"
+  ConnectionStrings__DefaultConnection: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+  Jwt__Issuer: ${JWT_ISSUER}
+  Jwt__Audience: ${JWT_AUDIENCE}
+  Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES}
+  ADMIN_USERNAME: ${ADMIN_USERNAME}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+  ADMIN_EMAIL: ${ADMIN_EMAIL}
   ASPNETCORE_URLS: "http://+:8080"
 
 x-frontend-base: &frontend-base
@@ -57,7 +60,7 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-env
-      Jwt__Secret: "change-me-in-production-min-32-chars!!"
+      Jwt__Secret: ${JWT_SECRET}
       ASPNETCORE_ENVIRONMENT: "Production"
     profiles: ["prd"]
 
@@ -66,11 +69,11 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:8080"
+      - "${FRONTEND_PORT}:8080"
     profiles: ["prd"]
 
   # ── Development profile ────────────────────────────────────────────────────
-  # Ports: postgres on 5433, backend on 5000, frontend on 3000.
+  # Ports: postgres on POSTGRES_PORT, backend on BACKEND_PORT, frontend on FRONTEND_PORT.
   # Network aliases keep internal service-name references intact so the
   # baked-in nginx proxy (backend:8080) and connection strings (Host=postgres)
   # work without any changes to application config.
@@ -78,7 +81,7 @@ services:
   postgres-dev:
     <<: *postgres-base
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT}:5432"
     networks:
       default:
         aliases: [postgres]
@@ -91,10 +94,10 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-env
-      Jwt__Secret: "dev-secret-change-me-in-production-min-32-chars!!"
+      Jwt__Secret: ${JWT_SECRET}
       ASPNETCORE_ENVIRONMENT: "Development"
     ports:
-      - "5000:8080"
+      - "${BACKEND_PORT}:8080"
     networks:
       default:
         aliases: [backend]
@@ -105,7 +108,7 @@ services:
     depends_on:
       - backend-dev
     ports:
-      - "3000:8080"
+      - "${FRONTEND_PORT}:8080"
     profiles: ["dev"]
 
 volumes:
