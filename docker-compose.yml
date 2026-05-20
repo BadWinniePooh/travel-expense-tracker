@@ -6,7 +6,10 @@
 
 x-postgres-base: &postgres-base
   image: postgres:16-alpine
-  user: "999:999"
+  # No user override: the postgres image entrypoint must start as root to
+  # chmod/chown the data directory, then it drops to the internal postgres
+  # user (UID 70 on Alpine) automatically. Forcing a non-root user here
+  # breaks the init sequence.
   environment:
     POSTGRES_DB: travelexpenses
     POSTGRES_USER: appuser
