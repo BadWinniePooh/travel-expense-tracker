@@ -1,11 +1,14 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { useSync } from '@/contexts/SyncContext'
 import { Button } from '@/components/ui/button'
 import { Plane, LogOut, Users, Home } from 'lucide-react'
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAdmin } = useAuth()
+  const { isOnline, pendingCount } = useSync()
   const navigate = useNavigate()
+  const bannerVisible = !isOnline || pendingCount > 0
 
   const handleLogout = () => {
     logout()
@@ -13,7 +16,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={`min-h-screen bg-background${bannerVisible ? ' pt-10' : ''}`}>
       <header className="border-b">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <div className="flex items-center gap-6">
