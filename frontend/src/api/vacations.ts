@@ -36,8 +36,9 @@ export const updateVacation = async (
   return data
 }
 
-export const deleteVacation = async (id: string): Promise<void> => {
-  await apiClient.delete(`/vacations/${id}`)
+export const deleteVacation = async (id: string): Promise<QueuedResponse | void> => {
+  const { data } = await apiClient.delete<QueuedResponse | undefined>(`/vacations/${id}`)
+  return data
 }
 
 // Participants

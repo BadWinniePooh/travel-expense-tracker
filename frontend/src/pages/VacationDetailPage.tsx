@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getVacation, getExpenses, getSummary,
   createExpense, updateExpense, deleteExpense,
   addParticipant, updateParticipant, removeParticipant,
+  deleteVacation,
 } from '@/api/vacations'
 import { getUsers } from '@/api/users'
 import { Layout } from '@/components/Layout'
@@ -33,6 +34,7 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK
 export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user, isAdmin } = useAuth()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -76,6 +78,8 @@ export function VacationDetailPage() {
   const [participantUserId, setParticipantUserId] = useState('')
   const [participantWeight, setParticipantWeight] = useState('')
   const [editParticipantId, setEditParticipantId] = useState<string | null>(null)
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   const isCreator = vacation?.createdBy === user?.id
 
@@ -146,6 +150,16 @@ export function VacationDetailPage() {
       if (isQueued(data)) { offlineToast(); return }
       queryClient.invalidateQueries({ queryKey: ['vacation', id] })
       queryClient.invalidateQueries({ queryKey: ['summary', id] })
+    },
+  })
+
+  const deleteVacationMutation = useMutation({
+    mutationFn: () => deleteVacation(id!),
+    onSuccess: (data) => {
+      setDeleteDialogOpen(false)
+      if (isQueued(data)) { offlineToast(); return }
+      queryClient.invalidateQueries({ queryKey: ['vacations'] })
+      navigate('/')
     },
   })
 
@@ -257,6 +271,17 @@ export function VacationDetailPage() {
               </span>
             </div>
           </div>
+          {canManage && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+              onClick={() => setDeleteDialogOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Vacation
+            </Button>
+          )}
         </div>
       </div>
 
@@ -611,6 +636,27 @@ export function VacationDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Vacation</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">
+            Are you sure you want to delete "{vacation.name}"? All expenses will be permanently removed.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteVacationMutation.isPending}
+              onClick={() => deleteVacationMutation.mutate()}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Layout>
