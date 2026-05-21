@@ -2,6 +2,7 @@ import axios from 'axios'
 
 const apiClient = axios.create({
   baseURL: '/api',
+  adapter: 'fetch', // required: service workers only intercept the Fetch API, not XHR
   headers: {
     'Content-Type': 'application/json',
   },
