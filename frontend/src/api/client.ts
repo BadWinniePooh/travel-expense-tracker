@@ -18,7 +18,11 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Only clear the session and redirect when we are actually online.
+    // Offline, an axios request may fail with a cached 401 from a previous
+    // response; kicking the user to /login while offline prevents them from
+    // using the cached data they rely on when travelling without connectivity.
+    if (error.response?.status === 401 && navigator.onLine) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       window.location.href = '/login'

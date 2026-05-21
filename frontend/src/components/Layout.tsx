@@ -1,13 +1,16 @@
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useSync } from '@/contexts/SyncContext'
 import { Button } from '@/components/ui/button'
-import { Plane, LogOut, Users, Home } from 'lucide-react'
+import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
+import { Plane, LogOut, Users, Home, KeyRound } from 'lucide-react'
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAdmin } = useAuth()
   const { isOnline, pendingCount } = useSync()
   const navigate = useNavigate()
+  const [changePwOpen, setChangePwOpen] = useState(false)
   const bannerVisible = !isOnline || pendingCount > 0
 
   const handleLogout = () => {
@@ -42,6 +45,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
               {user?.username}
               {isAdmin && <span className="ml-1 text-xs bg-primary text-primary-foreground rounded px-1">Admin</span>}
             </span>
+            <Button variant="ghost" size="sm" onClick={() => setChangePwOpen(true)}>
+              <KeyRound className="h-4 w-4 mr-1" />
+              Password
+            </Button>
             <Button variant="ghost" size="sm" onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-1" />
               Logout
@@ -49,6 +56,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+      <ChangePasswordDialog open={changePwOpen} onClose={() => setChangePwOpen(false)} />
       <main className="container mx-auto px-4 py-8">
         {children}
       </main>

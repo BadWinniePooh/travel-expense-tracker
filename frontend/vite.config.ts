@@ -4,6 +4,13 @@ import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   plugins: [
     react(),
     VitePWA({

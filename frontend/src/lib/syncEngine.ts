@@ -17,6 +17,12 @@ async function apiFetch<T = unknown>(method: string, path: string, body?: unknow
     headers: authHeaders(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+  if (res.status === 401) {
+    // Token expired — redirect to login so the user can re-authenticate.
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    window.location.href = '/login'
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`HTTP ${res.status}${text ? ': ' + text : ''}`)
@@ -83,14 +89,18 @@ export async function replayPendingActions(): Promise<void> {
 
   for (const action of actions) {
     try {
-      const result = await apiFetch<Record<string, unknown>>(action.method, action.endpoint, action.body)
+      // Re-read from DB so we pick up any endpoint/body rewrites made by a previous iteration
+      // (e.g. a preceding POST resolved a temp ID that this action's endpoint still references).
+      const fresh = await db.pendingActions.get(action.id!)
+      if (!fresh || fresh.status !== 'pending') continue
+      const result = await apiFetch<Record<string, unknown>>(fresh.method, fresh.endpoint, fresh.body)
 
-      if (action.method === 'POST' && action.localId && result?.id) {
+      if (fresh.method === 'POST' && fresh.localId && result?.id) {
         const realId = result.id as string
-        await resolveId(action.localId, realId, action.entityType)
+        await resolveId(fresh.localId!, realId, fresh.entityType)
 
         // Patch in server-computed fields the client approximated
-        if (action.entityType === 'expense') {
+        if (fresh.entityType === 'expense') {
           const updates: Partial<Expense> = {}
           if (result.amountInBaseCurrency !== undefined)
             updates.amountInBaseCurrency = result.amountInBaseCurrency as number
@@ -99,7 +109,7 @@ export async function replayPendingActions(): Promise<void> {
           if (Object.keys(updates).length)
             await db.expenses.update(realId, updates)
         }
-        if (action.entityType === 'vacation') {
+        if (fresh.entityType === 'vacation') {
           // Server may return computed fields (creatorUsername etc.)
           const serverVacation = result as unknown as Partial<Vacation>
           const stored = await db.vacations.get(realId)
@@ -109,7 +119,7 @@ export async function replayPendingActions(): Promise<void> {
         }
       }
 
-      await db.pendingActions.delete(action.id!)
+      await db.pendingActions.delete(fresh.id!)
     } catch (err) {
       if (err instanceof TypeError) {
         // Network failure — stop; will retry when back online
