@@ -120,13 +120,18 @@ export async function replayPendingActions(): Promise<void> {
 // Populate Dexie from the server without overwriting locally-created records.
 export async function seedFromServer(): Promise<void> {
   try {
-    // IDs that exist only locally (not yet confirmed by server)
+    // Collect localIds from ALL pending actions regardless of status so that
+    // failed-but-not-retried local records are not deleted by the cleanup pass.
+    const allActions = await db.pendingActions.toArray()
     const localIds = new Set(
-      (await db.pendingActions
-        .where('status').equals('pending')
-        .and(a => a.method === 'POST' && a.localId != null)
-        .toArray()
-      ).map(a => a.localId as string)
+      allActions
+        .filter(a => a.method === 'POST' && a.localId != null)
+        .map(a => a.localId as string)
+    )
+    const protectedExpenseIds = new Set(
+      allActions
+        .filter(a => a.entityType === 'expense' && a.localId != null)
+        .map(a => a.localId as string)
     )
 
     const vacations = await apiFetch<Vacation[]>('GET', '/vacations')
@@ -148,27 +153,18 @@ export async function seedFromServer(): Promise<void> {
 
     // Seed expenses and summaries for each server vacation
     for (const v of vacations) {
-      // Collect expense localIds whose pending actions belong to this vacation
-      const expLocalIds = new Set(
-        (await db.pendingActions
-          .where('status').equals('pending')
-          .and(a => a.entityType === 'expense' && a.method === 'POST' && a.endpoint.startsWith(`/vacations/${v.id}`))
-          .toArray()
-        ).map(a => a.localId as string).filter(Boolean)
-      )
-
       try {
         const expenses = await apiFetch<Expense[]>('GET', `/vacations/${v.id}/expenses`)
         for (const e of expenses) {
-          if (!expLocalIds.has(e.id)) {
+          if (!protectedExpenseIds.has(e.id)) {
             await db.expenses.put(e)
           }
         }
-        // Remove expenses deleted on the server
+        // Remove expenses deleted on the server (skip any locally-created ones)
         const serverExpIds = new Set(expenses.map(e => e.id))
         const storedExps = await db.expenses.where('vacationId').equals(v.id).toArray()
         for (const se of storedExps) {
-          if (!serverExpIds.has(se.id) && !expLocalIds.has(se.id)) {
+          if (!serverExpIds.has(se.id) && !protectedExpenseIds.has(se.id)) {
             await db.expenses.delete(se.id)
           }
         }
