@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/lib/db'
 import {
-  getVacation, getExpenses, getSummary,
-  createExpense, updateExpense, deleteExpense,
-  addParticipant, updateParticipant, removeParticipant,
-  deleteVacation,
-} from '@/api/vacations'
+  createExpenseLocal, updateExpenseLocal, deleteExpenseLocal,
+  addParticipantLocal, updateParticipantLocal, removeParticipantLocal,
+  deleteVacationLocal,
+} from '@/lib/localMutations'
 import { getUsers } from '@/api/users'
 import { Layout } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
@@ -19,8 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuth } from '@/contexts/AuthContext'
-import { useToast } from '@/hooks/use-toast'
-import { isQueued } from '@/lib/pwa'
+import { useSync } from '@/contexts/SyncContext'
 import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight } from 'lucide-react'
 import { format } from 'date-fns'
 import type { ExpenseCategory } from '@/types'
@@ -34,27 +34,19 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK
 export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user, isAdmin } = useAuth()
+  const { pendingCount } = useSync()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { toast } = useToast()
 
-  const { data: vacation, isLoading } = useQuery({
-    queryKey: ['vacation', id],
-    queryFn: () => getVacation(id!),
-  })
+  const vacation = useLiveQuery(() => db.vacations.get(id!), [id])
+  const expenses = useLiveQuery(
+    () => db.expenses.where('vacationId').equals(id!).toArray().then(list =>
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    ),
+    [id]
+  )
+  const cachedSummary = useLiveQuery(() => db.summaries.get(id!), [id])
 
-  const { data: expenses } = useQuery({
-    queryKey: ['expenses', id],
-    queryFn: () => getExpenses(id!),
-    enabled: !!vacation,
-  })
-
-  const { data: summary } = useQuery({
-    queryKey: ['summary', id],
-    queryFn: () => getSummary(id!),
-    enabled: !!vacation,
-  })
-
+  // Users list is admin-only and not needed offline — keep as server query
   const { data: allUsers } = useQuery({
     queryKey: ['users'],
     queryFn: getUsers,
@@ -72,102 +64,51 @@ export function VacationDetailPage() {
     category: 'Other' as ExpenseCategory,
     date: new Date().toISOString().split('T')[0],
   })
+  const [expenseSubmitting, setExpenseSubmitting] = useState(false)
 
   // Participant dialog
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false)
   const [participantUserId, setParticipantUserId] = useState('')
   const [participantWeight, setParticipantWeight] = useState('')
   const [editParticipantId, setEditParticipantId] = useState<string | null>(null)
+  const [participantSubmitting, setParticipantSubmitting] = useState(false)
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
-  const isCreator = vacation?.createdBy === user?.id
+  // vacation === undefined means Dexie hasn't loaded yet; null/missing means not found
+  if (vacation === undefined) {
+    return (
+      <Layout>
+        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+      </Layout>
+    )
+  }
 
-  const offlineToast = () =>
-    toast({ title: 'Saved offline', description: 'Will sync automatically when you reconnect.' })
+  if (!vacation) {
+    return (
+      <Layout>
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">Vacation not found.</p>
+          <Button asChild variant="outline" className="mt-4">
+            <Link to="/">Go back</Link>
+          </Button>
+        </div>
+      </Layout>
+    )
+  }
 
-  const createExpenseMutation = useMutation({
-    mutationFn: (data: Parameters<typeof createExpense>[1]) => createExpense(id!, data),
-    onSuccess: (data) => {
-      setExpenseDialogOpen(false)
-      resetExpenseForm()
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const updateExpenseMutation = useMutation({
-    mutationFn: ({ expenseId, data }: { expenseId: string; data: Parameters<typeof updateExpense>[2] }) =>
-      updateExpense(id!, expenseId, data),
-    onSuccess: (data) => {
-      setExpenseDialogOpen(false)
-      setEditExpense(null)
-      resetExpenseForm()
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const deleteExpenseMutation = useMutation({
-    mutationFn: (expenseId: string) => deleteExpense(id!, expenseId),
-    onSuccess: (data) => {
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const addParticipantMutation = useMutation({
-    mutationFn: (data: { userId: string; splitWeight: number }) => addParticipant(id!, data),
-    onSuccess: (data) => {
-      setParticipantDialogOpen(false)
-      setParticipantUserId('')
-      setParticipantWeight('')
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const updateParticipantMutation = useMutation({
-    mutationFn: ({ userId, splitWeight }: { userId: string; splitWeight: number }) =>
-      updateParticipant(id!, userId, { splitWeight }),
-    onSuccess: (data) => {
-      setParticipantDialogOpen(false)
-      setEditParticipantId(null)
-      setParticipantWeight('')
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const removeParticipantMutation = useMutation({
-    mutationFn: (userId: string) => removeParticipant(id!, userId),
-    onSuccess: (data) => {
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const deleteVacationMutation = useMutation({
-    mutationFn: () => deleteVacation(id!),
-    onSuccess: (data) => {
-      setDeleteDialogOpen(false)
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacations'] })
-      navigate('/')
-    },
-  })
+  const isCreator = vacation.createdBy === user?.id
+  const canManage = isAdmin || isCreator
+  const nonParticipantUsers = allUsers?.filter(
+    (u) => !vacation.participants.some((p) => p.userId === u.id)
+  ) ?? []
 
   const resetExpenseForm = () => {
     setExpenseForm({
-      paidByUserId: vacation?.participants[0]?.userId ?? '',
+      paidByUserId: vacation.participants[0]?.userId ?? '',
       amount: '',
-      currency: vacation?.baseCurrency ?? 'EUR',
+      currency: vacation.baseCurrency,
       description: '',
       category: 'Other',
       date: new Date().toISOString().split('T')[0],
@@ -195,58 +136,64 @@ export function VacationDetailPage() {
     setExpenseDialogOpen(true)
   }
 
-  const handleExpenseSubmit = (e: React.FormEvent) => {
+  const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const data = {
-      paidByUserId: expenseForm.paidByUserId,
-      amount: parseFloat(expenseForm.amount),
-      currency: expenseForm.currency,
-      description: expenseForm.description,
-      category: expenseForm.category,
-      date: new Date(expenseForm.date).toISOString(),
-    }
-    if (editExpense) {
-      updateExpenseMutation.mutate({ expenseId: editExpense, data })
-    } else {
-      createExpenseMutation.mutate(data)
+    setExpenseSubmitting(true)
+    try {
+      const data = {
+        paidByUserId: expenseForm.paidByUserId,
+        amount: parseFloat(expenseForm.amount),
+        currency: expenseForm.currency,
+        description: expenseForm.description,
+        category: expenseForm.category,
+        date: new Date(expenseForm.date).toISOString(),
+      }
+      if (editExpense) {
+        await updateExpenseLocal(id!, editExpense, data, vacation)
+      } else {
+        await createExpenseLocal(id!, data, vacation)
+      }
+      setExpenseDialogOpen(false)
+      setEditExpense(null)
+      resetExpenseForm()
+    } finally {
+      setExpenseSubmitting(false)
     }
   }
 
-  const handleParticipantSubmit = (e: React.FormEvent) => {
+  const handleParticipantSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const splitWeight = parseFloat(participantWeight)
-    if (editParticipantId) {
-      updateParticipantMutation.mutate({ userId: editParticipantId, splitWeight })
-    } else {
-      addParticipantMutation.mutate({ userId: participantUserId, splitWeight })
+    setParticipantSubmitting(true)
+    try {
+      const splitWeight = parseFloat(participantWeight)
+      if (editParticipantId) {
+        await updateParticipantLocal(id!, editParticipantId, splitWeight)
+      } else {
+        const userInfo = allUsers?.find(u => u.id === participantUserId)
+        if (userInfo) {
+          await addParticipantLocal(id!, { userId: participantUserId, splitWeight }, userInfo)
+        }
+      }
+      setParticipantDialogOpen(false)
+      setEditParticipantId(null)
+      setParticipantUserId('')
+      setParticipantWeight('')
+    } finally {
+      setParticipantSubmitting(false)
     }
   }
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
-      </Layout>
-    )
+  const handleDeleteVacation = async () => {
+    setDeleteSubmitting(true)
+    try {
+      await deleteVacationLocal(id!)
+      navigate('/')
+    } finally {
+      setDeleteSubmitting(false)
+    }
   }
 
-  if (!vacation) {
-    return (
-      <Layout>
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">Vacation not found.</p>
-          <Button asChild variant="outline" className="mt-4">
-            <Link to="/">Go back</Link>
-          </Button>
-        </div>
-      </Layout>
-    )
-  }
-
-  const canManage = isAdmin || isCreator
-  const nonParticipantUsers = allUsers?.filter(
-    (u) => !vacation.participants.some((p) => p.userId === u.id)
-  ) ?? []
+  const summary = cachedSummary?.data
 
   return (
     <Layout>
@@ -302,7 +249,7 @@ export function VacationDetailPage() {
             </Button>
           </div>
 
-          {expenses && expenses.length === 0 && (
+          {expenses?.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               No expenses yet. Add the first one!
             </div>
@@ -343,7 +290,7 @@ export function VacationDetailPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => deleteExpenseMutation.mutate(expense.id)}
+                            onClick={() => deleteExpenseLocal(id!, expense.id)}
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
@@ -410,7 +357,7 @@ export function VacationDetailPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => removeParticipantMutation.mutate(p.userId)}
+                              onClick={() => removeParticipantLocal(id!, p.userId)}
                             >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
@@ -432,6 +379,11 @@ export function VacationDetailPage() {
         {/* SUMMARY TAB */}
         <TabsContent value="summary">
           <div className="mt-4 space-y-6">
+            {pendingCount > 0 && (
+              <p className="text-sm text-amber-600">
+                Summary reflects the last sync. {pendingCount} change{pendingCount !== 1 ? 's' : ''} pending — totals will update after reconnecting.
+              </p>
+            )}
             {summary && (
               <>
                 <Card>
@@ -485,10 +437,7 @@ export function VacationDetailPage() {
                     <CardContent>
                       <div className="space-y-2">
                         {summary.transfers.map((t, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center gap-3 p-3 rounded-md border"
-                          >
+                          <div key={i} className="flex items-center gap-3 p-3 rounded-md border">
                             <span className="font-medium">{t.fromUsername}</span>
                             <ArrowRight className="h-4 w-4 text-muted-foreground" />
                             <span className="font-medium">{t.toUsername}</span>
@@ -510,6 +459,11 @@ export function VacationDetailPage() {
                   </Card>
                 )}
               </>
+            )}
+            {!summary && (
+              <div className="text-center py-12 text-muted-foreground">
+                Summary will be available after the first sync.
+              </div>
             )}
           </div>
         </TabsContent>
@@ -587,7 +541,7 @@ export function VacationDetailPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setExpenseDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createExpenseMutation.isPending || updateExpenseMutation.isPending}>
+              <Button type="submit" disabled={expenseSubmitting}>
                 {editExpense ? 'Save Changes' : 'Add Expense'}
               </Button>
             </DialogFooter>
@@ -631,7 +585,7 @@ export function VacationDetailPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setParticipantDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={addParticipantMutation.isPending || updateParticipantMutation.isPending}>
+              <Button type="submit" disabled={participantSubmitting}>
                 {editParticipantId ? 'Save' : 'Add'}
               </Button>
             </DialogFooter>
@@ -639,6 +593,7 @@ export function VacationDetailPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete Vacation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -649,11 +604,7 @@ export function VacationDetailPage() {
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              disabled={deleteVacationMutation.isPending}
-              onClick={() => deleteVacationMutation.mutate()}
-            >
+            <Button variant="destructive" disabled={deleteSubmitting} onClick={handleDeleteVacation}>
               Delete
             </Button>
           </DialogFooter>

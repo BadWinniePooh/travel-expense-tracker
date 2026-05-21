@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Link } from 'react-router-dom'
-import { getVacations } from '@/api/vacations'
+import { db } from '@/lib/db'
 import { Layout } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,10 +9,7 @@ import { Plus, Calendar, Users, Plane } from 'lucide-react'
 import { format } from 'date-fns'
 
 export function DashboardPage() {
-  const { data: vacations, isLoading, error } = useQuery({
-    queryKey: ['vacations'],
-    queryFn: getVacations,
-  })
+  const vacations = useLiveQuery(() => db.vacations.toArray())
 
   return (
     <Layout>
@@ -29,15 +26,11 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      {isLoading && (
+      {vacations === undefined && (
         <div className="text-center py-12 text-muted-foreground">Loading vacations...</div>
       )}
 
-      {error && (
-        <div className="text-center py-12 text-destructive">Failed to load vacations.</div>
-      )}
-
-      {vacations && vacations.length === 0 && (
+      {vacations?.length === 0 && (
         <div className="text-center py-16">
           <Plane className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-semibold mb-2">No vacations yet</h3>
