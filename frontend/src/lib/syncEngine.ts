@@ -108,10 +108,16 @@ export async function replayPendingActions(): Promise<void> {
         // Network failure — stop; will retry when back online
         break
       }
-      // Server error (4xx/5xx) — mark failed, move on to next action
+      const msg = String(err)
+      const is5xx = /HTTP 5\d\d/.test(msg)
+      if (is5xx) {
+        // Transient server error (e.g. exchange-rate API down) — stop and retry next sync
+        break
+      }
+      // Client error (4xx) — bad request, won't recover by retrying; mark failed and move on
       await db.pendingActions.update(action.id!, {
         status: 'failed',
-        error: String(err),
+        error: msg,
       })
     }
   }

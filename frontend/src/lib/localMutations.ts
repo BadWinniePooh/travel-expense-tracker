@@ -41,7 +41,7 @@ export async function createExpenseLocal(
 ): Promise<string> {
   const id = crypto.randomUUID()
   const participant = vacation.participants.find(p => p.userId === data.paidByUserId)
-  // amountInBaseCurrency is approximate until the server recalculates exchange rates on sync
+  // Offline placeholder: same-currency expenses are exact; cross-currency uses 1:1 until server corrects it on sync
   const amountInBaseCurrency = data.currency === vacation.baseCurrency ? data.amount : data.amount
   await db.expenses.put({
     id,
@@ -74,6 +74,7 @@ export async function updateExpenseLocal(
   }
   const newAmount = data.amount ?? existing.amount
   const newCurrency = data.currency ?? existing.currency
+  // Offline placeholder — server will correct cross-currency values on sync
   updates.amountInBaseCurrency = newCurrency === vacation.baseCurrency ? newAmount : newAmount
   await db.expenses.update(expenseId, updates)
   await enqueueMutation({ method: 'PUT', endpoint: `/vacations/${vacationId}/expenses/${expenseId}`, body: data as Record<string, unknown>, entityType: 'expense' })
