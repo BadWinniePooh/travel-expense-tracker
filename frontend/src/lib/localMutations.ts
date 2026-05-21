@@ -29,7 +29,20 @@ export async function deleteVacationLocal(vacationId: string): Promise<void> {
   await db.vacations.delete(vacationId)
   await db.expenses.where('vacationId').equals(vacationId).delete()
   await db.summaries.delete(vacationId)
-  await enqueueMutation({ method: 'DELETE', endpoint: `/vacations/${vacationId}`, entityType: 'vacation' })
+
+  const pendingPost = await db.pendingActions
+    .filter(a => (a.status === 'pending' || a.status === 'failed') && a.method === 'POST' && a.localId === vacationId)
+    .first()
+
+  // Cancel all queued mutations for this vacation — they are moot now
+  await db.pendingActions
+    .filter(a => a.endpoint.startsWith(`/vacations/${vacationId}`) || a.localId === vacationId)
+    .delete()
+
+  if (!pendingPost) {
+    // Vacation existed on server — tell it to delete
+    await enqueueMutation({ method: 'DELETE', endpoint: `/vacations/${vacationId}`, entityType: 'vacation' })
+  }
 }
 
 // ── Expenses ───────────────────────────────────────────────────────────────────
@@ -77,12 +90,35 @@ export async function updateExpenseLocal(
   // Offline placeholder — server will correct cross-currency values on sync
   updates.amountInBaseCurrency = newCurrency === vacation.baseCurrency ? newAmount : newAmount
   await db.expenses.update(expenseId, updates)
-  await enqueueMutation({ method: 'PUT', endpoint: `/vacations/${vacationId}/expenses/${expenseId}`, body: data as Record<string, unknown>, entityType: 'expense' })
+
+  // If the expense hasn't been created on the server yet, merge the edit into the
+  // pending creation action rather than sending a PUT to a non-existent resource.
+  const pendingPost = await db.pendingActions
+    .filter(a => (a.status === 'pending' || a.status === 'failed') && a.method === 'POST' && a.localId === expenseId)
+    .first()
+  if (pendingPost) {
+    await db.pendingActions.update(pendingPost.id!, {
+      body: { ...pendingPost.body, ...data } as Record<string, unknown>,
+      status: 'pending',
+      error: undefined,
+    })
+  } else {
+    await enqueueMutation({ method: 'PUT', endpoint: `/vacations/${vacationId}/expenses/${expenseId}`, body: data as Record<string, unknown>, entityType: 'expense' })
+  }
 }
 
 export async function deleteExpenseLocal(vacationId: string, expenseId: string): Promise<void> {
   await db.expenses.delete(expenseId)
-  await enqueueMutation({ method: 'DELETE', endpoint: `/vacations/${vacationId}/expenses/${expenseId}`, entityType: 'expense' })
+
+  const pendingPost = await db.pendingActions
+    .filter(a => (a.status === 'pending' || a.status === 'failed') && a.method === 'POST' && a.localId === expenseId)
+    .first()
+  if (pendingPost) {
+    // Expense never reached the server — cancel the creation instead of sending DELETE
+    await db.pendingActions.delete(pendingPost.id!)
+  } else {
+    await enqueueMutation({ method: 'DELETE', endpoint: `/vacations/${vacationId}/expenses/${expenseId}`, entityType: 'expense' })
+  }
 }
 
 // ── Participants ───────────────────────────────────────────────────────────────

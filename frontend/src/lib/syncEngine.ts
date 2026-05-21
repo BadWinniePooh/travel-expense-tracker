@@ -70,6 +70,13 @@ async function rewritePendingActionIds(tempId: string, realId: string): Promise<
 
 // Replay all pending actions in creation order, stopping on network failure.
 export async function replayPendingActions(): Promise<void> {
+  // Reset previously-failed creation actions so they are retried. Creation failures are
+  // often transient (server unavailable, JWT expired) and the user's local record is the
+  // source of truth until the server confirms it.
+  await db.pendingActions
+    .filter(a => a.status === 'failed' && a.method === 'POST' && a.localId != null)
+    .modify({ status: 'pending', error: undefined })
+
   const actions = await db.pendingActions
     .where('status').equals('pending')
     .sortBy('seq')
