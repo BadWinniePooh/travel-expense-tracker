@@ -244,8 +244,6 @@ describe('replayPendingActions', () => {
 
     await replayPendingActions()
 
-    // Fetch was called — the failed creation was retried
-    const fetchMock = vi.getMockFn ? undefined : undefined
     expect(await db.vacations.get('real-x')).toBeDefined()
     expect(await db.vacations.get('temp-x')).toBeUndefined()
     expect(await db.pendingActions.count()).toBe(0)
