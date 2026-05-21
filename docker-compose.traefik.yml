@@ -1,0 +1,103 @@
+# HTTPS deployment using Traefik + Let's Encrypt
+#
+# Use this file INSTEAD of docker-compose.yml when you want automatic HTTPS:
+#
+#   docker compose -f docker-compose.traefik.yml up -d
+#
+# Prerequisites:
+#   1. cp .env.example .env  and fill in DOMAIN + LETSENCRYPT_EMAIL
+#   2. The server's ports 80 and 443 must be reachable from the internet.
+#      (Add port-forwarding rules on your router if behind NAT.)
+#   3. DOMAIN must resolve to the server's public IP *before* first run —
+#      Let's Encrypt uses an HTTP-01 challenge to verify ownership.
+#
+# No static IP? Use a free dynamic-DNS service such as DuckDNS (duckdns.org)
+# to get a stable hostname that follows your changing IP.
+#
+# Traefik stores the ACME certificate in the named volume "traefik-certs".
+# Back up that volume to avoid hitting Let's Encrypt rate limits on re-issue.
+
+x-postgres-env: &postgres-env
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+x-backend-env: &backend-env
+  ConnectionStrings__DefaultConnection: "Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+  Jwt__Secret: ${JWT_SECRET}
+  Jwt__Issuer: ${JWT_ISSUER}
+  Jwt__Audience: ${JWT_AUDIENCE}
+  Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES}
+  ADMIN_USERNAME: ${ADMIN_USERNAME}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+  ADMIN_EMAIL: ${ADMIN_EMAIL}
+  ASPNETCORE_URLS: "http://+:8080"
+  ASPNETCORE_ENVIRONMENT: "Production"
+
+services:
+
+  traefik:
+    image: traefik:v3
+    restart: unless-stopped
+    # Traefik must run as root to bind privileged ports 80 and 443.
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/certs/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/certs
+
+  postgres:
+    image: postgres:16-alpine
+    # No user override: postgres image entrypoint must start as root to
+    # chmod/chown the data directory, then drops to its internal user automatically.
+    environment:
+      <<: *postgres-env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    user: "1001:1001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    user: "101:101"
+    depends_on:
+      - backend
+    # No ports: Traefik routes external HTTPS traffic to this container.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.app.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.routers.app.tls.certresolver=le"
+      - "traefik.http.services.app.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  traefik-certs:
