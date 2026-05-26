@@ -18,10 +18,14 @@ async function apiFetch<T = unknown>(method: string, path: string, body?: unknow
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    // Token expired — redirect to login so the user can re-authenticate.
+    // Token expired — clear the stored session and redirect to login.
+    // Guard against redirecting when already on /login to avoid a reload loop
+    // (SyncContext runs on every mount, including the login page itself).
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    window.location.href = '/login'
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login'
+    }
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')

@@ -30,16 +30,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Seed local DB on first load (if online)
+  // Seed local DB on first load (if online and authenticated)
   useEffect(() => {
-    if (navigator.onLine) {
+    if (navigator.onLine && localStorage.getItem('token')) {
       replayPendingActions().then(() => seedFromServer())
     }
   }, [])
 
   // On reconnect: replay queued mutations, then refresh local DB from server
   useEffect(() => {
-    if (isOnline) {
+    if (isOnline && localStorage.getItem('token')) {
       replayPendingActions().then(() => seedFromServer())
     }
   }, [isOnline])
