@@ -106,7 +106,9 @@ export function VacationDetailPage() {
 
   const resetExpenseForm = () => {
     setExpenseForm({
-      paidByUserId: vacation.participants[0]?.userId ?? '',
+      paidByUserId: vacation.participants.find(p => p.userId === user?.id)?.userId
+        ?? vacation.participants[0]?.userId
+        ?? '',
       amount: '',
       currency: vacation.baseCurrency,
       description: '',
@@ -153,11 +155,13 @@ export function VacationDetailPage() {
       } else {
         await createExpenseLocal(id!, data, vacation)
       }
+    } finally {
+      // Always close the dialog and reset — the local write already succeeded
+      // even if the background sync threw, so keeping the form open would be confusing.
+      setExpenseSubmitting(false)
       setExpenseDialogOpen(false)
       setEditExpense(null)
       resetExpenseForm()
-    } finally {
-      setExpenseSubmitting(false)
     }
   }
 
