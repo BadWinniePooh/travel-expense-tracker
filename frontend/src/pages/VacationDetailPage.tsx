@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
 import { useAuth } from '@/contexts/AuthContext'
 import { useSync } from '@/contexts/SyncContext'
 import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight } from 'lucide-react'
@@ -30,6 +31,32 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 ]
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK', 'NOK', 'DKK']
+
+// Dragging one participant's slider to `newValue` rescales every other participant's weight
+// proportionally so the set always sums to 1.0, instead of leaving the total to drift.
+function redistributeSplit(
+  weights: Record<string, string>,
+  changedUserId: string,
+  newValue: number
+): Record<string, string> {
+  const others = Object.keys(weights).filter(k => k !== changedUserId)
+  const oldRemaining = others.reduce((s, k) => s + (parseFloat(weights[k]) || 0), 0)
+  const newRemaining = Math.max(0, 1 - newValue)
+  const next: Record<string, string> = { ...weights, [changedUserId]: String(newValue) }
+  if (others.length === 0) return next
+  if (oldRemaining > 0.0001) {
+    const scale = newRemaining / oldRemaining
+    others.forEach(k => { next[k] = String((parseFloat(weights[k]) || 0) * scale) })
+  } else {
+    const even = newRemaining / others.length
+    others.forEach(k => { next[k] = String(even) })
+  }
+  // Correct floating-point drift so the set sums to exactly 1.0
+  const total = Object.values(next).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+  const lastOther = others[others.length - 1]
+  next[lastOther] = String((parseFloat(next[lastOther]) || 0) + (1 - total))
+  return next
+}
 
 export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -596,22 +623,27 @@ export function VacationDetailPage() {
                 </p>
               ) : (
                 <>
-                  {vacation.participants.map((p) => (
-                    <div key={p.userId} className="flex items-center gap-2">
-                      <span className="text-sm flex-1">{p.username}</span>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        max="1"
-                        className="w-24"
-                        value={splitWeights[p.userId] ?? ''}
-                        onChange={(e) => setSplitWeights((w) => ({ ...w, [p.userId]: e.target.value }))}
-                      />
-                    </div>
-                  ))}
-                  <p className={`text-xs ${Math.abs(splitWeightSum - 1) > 0.001 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    Total: {splitWeightSum.toFixed(4)} (must equal 1.0)
+                  {vacation.participants.map((p) => {
+                    const pct = Math.round((parseFloat(splitWeights[p.userId] ?? '0')) * 100)
+                    return (
+                      <div key={p.userId} className="flex items-center gap-3">
+                        <span className="text-sm w-24 shrink-0 truncate">{p.username}</span>
+                        <Slider
+                          value={[pct]}
+                          min={0}
+                          max={100}
+                          step={1}
+                          onValueChange={([v]) =>
+                            setSplitWeights((w) => redistributeSplit(w, p.userId, v / 100))
+                          }
+                          className="flex-1"
+                        />
+                        <span className="text-sm w-12 text-right tabular-nums">{pct}%</span>
+                      </div>
+                    )
+                  })}
+                  <p className="text-xs text-muted-foreground">
+                    Total: {Math.round(splitWeightSum * 100)}%
                   </p>
                 </>
               )}
