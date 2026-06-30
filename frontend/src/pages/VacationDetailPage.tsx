@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
+import { computeSummary } from '@/lib/summary'
 import {
   createExpenseLocal, updateExpenseLocal, deleteExpenseLocal,
   addParticipantLocal, updateParticipantLocal, removeParticipantLocal,
@@ -71,7 +72,8 @@ export function VacationDetailPage() {
     ),
     [id]
   )
-  const cachedSummary = useLiveQuery(() => db.summaries.get(id!), [id])
+  // Computed locally from IndexedDB expenses so totals and fair share always
+  // reflect the current local state on reload, even before/without a server sync.
 
   // Users list is admin-only and not needed offline — keep as server query
   const { data: allUsers } = useQuery({
@@ -247,7 +249,7 @@ export function VacationDetailPage() {
     }
   }
 
-  const summary = cachedSummary?.data
+  const summary = expenses ? computeSummary(vacation, expenses) : undefined
 
   return (
     <Layout>
@@ -440,7 +442,7 @@ export function VacationDetailPage() {
           <div className="mt-4 space-y-6">
             {pendingCount > 0 && (
               <p className="text-sm text-amber-600">
-                Summary reflects the last sync. {pendingCount} change{pendingCount !== 1 ? 's' : ''} pending — totals will update after reconnecting.
+                {pendingCount} change{pendingCount !== 1 ? 's' : ''} pending sync — totals already reflect them locally.
               </p>
             )}
             {summary && (
@@ -521,7 +523,7 @@ export function VacationDetailPage() {
             )}
             {!summary && (
               <div className="text-center py-12 text-muted-foreground">
-                Summary will be available after the first sync.
+                Loading...
               </div>
             )}
           </div>
