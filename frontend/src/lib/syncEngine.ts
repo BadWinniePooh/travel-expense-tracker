@@ -110,6 +110,10 @@ export async function replayPendingActions(): Promise<void> {
             updates.amountInBaseCurrency = result.amountInBaseCurrency as number
           if (result.paidByUsername !== undefined)
             updates.paidByUsername = result.paidByUsername as string
+          if (result.isSplitCustom !== undefined)
+            updates.isSplitCustom = result.isSplitCustom as boolean
+          if (result.splits !== undefined)
+            updates.splits = result.splits as Expense['splits']
           if (Object.keys(updates).length)
             await db.expenses.update(realId, updates)
         }

@@ -11,8 +11,14 @@ public record ExpenseDto(
     string Description,
     string Category,
     DateTime Date,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    bool IsSplitCustom,
+    List<ExpenseSplitDto> Splits
 );
+
+public record ExpenseSplitDto(Guid UserId, string Username, decimal Weight);
+
+public record ExpenseSplitItem(Guid UserId, decimal Weight);
 
 public record CreateExpenseRequest(
     Guid PaidByUserId,
@@ -20,7 +26,8 @@ public record CreateExpenseRequest(
     string Currency,
     string Description,
     string Category,
-    DateTime Date
+    DateTime Date,
+    List<ExpenseSplitItem>? Splits
 );
 
 public record UpdateExpenseRequest(
@@ -29,7 +36,9 @@ public record UpdateExpenseRequest(
     string? Currency,
     string? Description,
     string? Category,
-    DateTime? Date
+    DateTime? Date,
+    List<ExpenseSplitItem>? Splits,
+    bool ResetSplit = false
 );
 
 public record SummaryDto(

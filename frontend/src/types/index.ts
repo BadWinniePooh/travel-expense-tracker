@@ -26,6 +26,12 @@ export interface Vacation {
   participants: Participant[]
 }
 
+export interface ExpenseSplit {
+  userId: string
+  username: string
+  weight: number
+}
+
 export interface Expense {
   id: string
   vacationId: string
@@ -38,6 +44,8 @@ export interface Expense {
   category: string
   date: string
   createdAt: string
+  isSplitCustom: boolean
+  splits: ExpenseSplit[]
 }
 
 export interface ParticipantBalance {

@@ -36,6 +36,8 @@ function makeExpense(overrides: Partial<Expense> = {}): Expense {
     category: 'Food',
     date: '2026-01-01',
     createdAt: new Date().toISOString(),
+    isSplitCustom: false,
+    splits: [],
     ...overrides,
   }
 }

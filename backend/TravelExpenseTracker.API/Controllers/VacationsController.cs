@@ -189,7 +189,7 @@ public class VacationsController : ControllerBase
             return Forbid();
 
         var expenses = await _expenseRepository.GetByVacationIdAsync(id);
-        return Ok(expenses.Select(e => MapExpenseToDto(e)));
+        return Ok(expenses.Select(e => MapExpenseToDto(e, vacation)));
     }
 
     [HttpPost("{id:guid}/expenses")]
@@ -207,6 +207,9 @@ public class VacationsController : ControllerBase
         if (!Enum.TryParse<ExpenseCategory>(request.Category, true, out var category))
             return BadRequest(new { message = "Invalid expense category" });
 
+        if (request.Splits != null && !TryValidateSplits(vacation, request.Splits, out var splitError))
+            return BadRequest(new { message = splitError });
+
         var amountInBase = await _exchangeRateService.ConvertAsync(request.Amount, request.Currency, vacation.BaseCurrency);
 
         var expense = new Expense
@@ -222,8 +225,19 @@ public class VacationsController : ControllerBase
         };
 
         var created = await _expenseRepository.CreateAsync(expense);
+
+        if (request.Splits != null)
+        {
+            await _expenseRepository.SetSplitAsync(created.Id, request.Splits.Select(s => new ExpenseSplit
+            {
+                ExpenseId = created.Id,
+                UserId = s.UserId,
+                Weight = s.Weight
+            }));
+        }
+
         var withUser = await _expenseRepository.GetByIdAsync(created.Id);
-        return CreatedAtAction(nameof(GetExpenses), new { id }, MapExpenseToDto(withUser!));
+        return CreatedAtAction(nameof(GetExpenses), new { id }, MapExpenseToDto(withUser!, vacation));
     }
 
     [HttpPut("{id:guid}/expenses/{expenseId:guid}")]
@@ -237,6 +251,9 @@ public class VacationsController : ControllerBase
 
         var expense = await _expenseRepository.GetByIdAsync(expenseId);
         if (expense == null || expense.VacationId != id) return NotFound();
+
+        if (request.Splits != null && !TryValidateSplits(vacation, request.Splits, out var splitError))
+            return BadRequest(new { message = splitError });
 
         if (request.PaidByUserId.HasValue)
         {
@@ -265,7 +282,23 @@ public class VacationsController : ControllerBase
         }
 
         var updated = await _expenseRepository.UpdateAsync(expense);
-        return Ok(MapExpenseToDto(updated));
+
+        if (request.Splits != null)
+        {
+            await _expenseRepository.SetSplitAsync(expenseId, request.Splits.Select(s => new ExpenseSplit
+            {
+                ExpenseId = expenseId,
+                UserId = s.UserId,
+                Weight = s.Weight
+            }));
+        }
+        else if (request.ResetSplit)
+        {
+            await _expenseRepository.ClearSplitAsync(expenseId);
+        }
+
+        var withSplits = await _expenseRepository.GetByIdAsync(expenseId);
+        return Ok(MapExpenseToDto(withSplits!, vacation));
     }
 
     [HttpDelete("{id:guid}/expenses/{expenseId:guid}")]
@@ -297,12 +330,32 @@ public class VacationsController : ControllerBase
         var expenses = await _expenseRepository.GetByVacationIdAsync(id);
         var totalExpenses = expenses.Sum(e => e.AmountInBaseCurrency);
 
-        // Build per-participant balances
+        // Build per-participant balances. Each expense contributes its fair share exactly
+        // once: using its custom split if overridden, otherwise the vacation's current
+        // per-participant SplitWeight (so non-overridden expenses track live vacation changes).
         var participants = vacation.Participants.ToList();
+        var fairShares = participants.ToDictionary(p => p.UserId, _ => 0m);
+        foreach (var e in expenses)
+        {
+            if (e.Splits.Count > 0)
+            {
+                foreach (var s in e.Splits)
+                {
+                    if (fairShares.ContainsKey(s.UserId))
+                        fairShares[s.UserId] += e.AmountInBaseCurrency * s.Weight;
+                }
+            }
+            else
+            {
+                foreach (var p in participants)
+                    fairShares[p.UserId] += e.AmountInBaseCurrency * p.SplitWeight;
+            }
+        }
+
         var balances = participants.Select(p =>
         {
             var paid = expenses.Where(e => e.PaidByUserId == p.UserId).Sum(e => e.AmountInBaseCurrency);
-            var fairShare = totalExpenses * p.SplitWeight;
+            var fairShare = fairShares[p.UserId];
             return new
             {
                 UserId = p.UserId,
@@ -365,11 +418,46 @@ public class VacationsController : ControllerBase
         v.Participants.Select(p => new ParticipantDto(p.UserId, p.User?.Username ?? string.Empty, p.User?.Email ?? string.Empty, p.SplitWeight)).ToList()
     );
 
-    private static ExpenseDto MapExpenseToDto(Expense e) => new(
-        e.Id, e.VacationId, e.PaidByUserId,
-        e.PaidBy?.Username ?? string.Empty,
-        e.Amount, e.Currency, e.AmountInBaseCurrency,
-        e.Description, e.Category.ToString(),
-        e.Date, e.CreatedAt
-    );
+    private static ExpenseDto MapExpenseToDto(Expense e, Vacation vacation)
+    {
+        var isCustom = e.Splits.Count > 0;
+        var effectiveSplits = isCustom
+            ? e.Splits.Select(s => new ExpenseSplitDto(
+                s.UserId,
+                vacation.Participants.FirstOrDefault(p => p.UserId == s.UserId)?.User?.Username ?? string.Empty,
+                s.Weight))
+            : vacation.Participants.Select(p => new ExpenseSplitDto(p.UserId, p.User?.Username ?? string.Empty, p.SplitWeight));
+
+        return new ExpenseDto(
+            e.Id, e.VacationId, e.PaidByUserId,
+            e.PaidBy?.Username ?? string.Empty,
+            e.Amount, e.Currency, e.AmountInBaseCurrency,
+            e.Description, e.Category.ToString(),
+            e.Date, e.CreatedAt,
+            isCustom, effectiveSplits.ToList()
+        );
+    }
+
+    private static bool TryValidateSplits(Vacation vacation, List<ExpenseSplitItem> splits, out string error)
+    {
+        var participantIds = vacation.Participants.Select(p => p.UserId).ToHashSet();
+        if (splits.Any(s => !participantIds.Contains(s.UserId)))
+        {
+            error = "Split contains a user who is not a participant of this vacation";
+            return false;
+        }
+        if (splits.Select(s => s.UserId).Distinct().Count() != splits.Count)
+        {
+            error = "Split contains duplicate participants";
+            return false;
+        }
+        var total = splits.Sum(s => s.Weight);
+        if (Math.Abs(total - 1.0m) > 0.001m)
+        {
+            error = "Split weights must sum to 1.0";
+            return false;
+        }
+        error = string.Empty;
+        return true;
+    }
 }

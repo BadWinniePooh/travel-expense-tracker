@@ -50,6 +50,8 @@ function makeExpense(overrides: Partial<Expense> = {}): Expense {
     category: 'Food',
     date: '2026-01-01',
     createdAt: new Date().toISOString(),
+    isSplitCustom: false,
+    splits: [],
     ...overrides,
   }
 }
@@ -182,6 +184,116 @@ describe('deleteExpenseLocal', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0].method).toBe('DELETE')
     expect(actions[0].endpoint).toContain('real-exp')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Split overrides
+// ---------------------------------------------------------------------------
+
+const twoParticipantVacation: Vacation = {
+  ...testVacation,
+  id: 'vac-2',
+  participants: [
+    { userId: 'user-1', username: 'Alice', email: 'alice@test.com', splitWeight: 0.6 },
+    { userId: 'user-2', username: 'Bob', email: 'bob@test.com', splitWeight: 0.4 },
+  ],
+}
+
+describe('split overrides', () => {
+  beforeEach(async () => {
+    await db.vacations.put(twoParticipantVacation)
+  })
+
+  it('createExpenseLocal without splits defaults to tracking the vacation split (no override stored)', async () => {
+    const expenseId = await createExpenseLocal(
+      'vac-2',
+      { paidByUserId: 'user-1', amount: 100, currency: 'EUR', description: 'Dinner', category: 'Food', date: '2026-01-01' },
+      twoParticipantVacation
+    )
+    const expense = await db.expenses.get(expenseId)
+    expect(expense?.isSplitCustom).toBe(false)
+    expect(expense?.splits).toEqual([])
+  })
+
+  it('createExpenseLocal with splits stores a pinned custom override', async () => {
+    const expenseId = await createExpenseLocal(
+      'vac-2',
+      {
+        paidByUserId: 'user-1', amount: 100, currency: 'EUR', description: 'Dinner', category: 'Food', date: '2026-01-01',
+        splits: [{ userId: 'user-1', weight: 0.9 }, { userId: 'user-2', weight: 0.1 }],
+      },
+      twoParticipantVacation
+    )
+    const expense = await db.expenses.get(expenseId)
+    expect(expense?.isSplitCustom).toBe(true)
+    expect(expense?.splits).toEqual([
+      { userId: 'user-1', weight: 0.9, username: 'Alice' },
+      { userId: 'user-2', weight: 0.1, username: 'Bob' },
+    ])
+
+    const action = (await db.pendingActions.toArray())[0]
+    expect((action.body as Record<string, unknown>).splits).toEqual([
+      { userId: 'user-1', weight: 0.9 }, { userId: 'user-2', weight: 0.1 },
+    ])
+  })
+
+  it('updateExpenseLocal sets a custom override on a previously-default expense', async () => {
+    await db.expenses.put(makeExpense({ id: 'exp-1', vacationId: 'vac-2', isSplitCustom: false, splits: [] }))
+
+    await updateExpenseLocal('vac-2', 'exp-1', {
+      splits: [{ userId: 'user-1', weight: 0.9 }, { userId: 'user-2', weight: 0.1 }],
+    }, twoParticipantVacation)
+
+    const expense = await db.expenses.get('exp-1')
+    expect(expense?.isSplitCustom).toBe(true)
+    expect(expense?.splits).toEqual([
+      { userId: 'user-1', weight: 0.9, username: 'Alice' },
+      { userId: 'user-2', weight: 0.1, username: 'Bob' },
+    ])
+  })
+
+  it('updateExpenseLocal with resetSplit reverts a custom override to default', async () => {
+    await db.expenses.put(makeExpense({
+      id: 'exp-1', vacationId: 'vac-2', isSplitCustom: true,
+      splits: [{ userId: 'user-1', weight: 0.9, username: 'Alice' }, { userId: 'user-2', weight: 0.1, username: 'Bob' }],
+    }))
+
+    await updateExpenseLocal('vac-2', 'exp-1', { resetSplit: true }, twoParticipantVacation)
+
+    const expense = await db.expenses.get('exp-1')
+    expect(expense?.isSplitCustom).toBe(false)
+    expect(expense?.splits).toEqual([])
+
+    const action = (await db.pendingActions.toArray())[0]
+    expect(action.method).toBe('PUT')
+    expect((action.body as Record<string, unknown>).resetSplit).toBe(true)
+  })
+
+  it('merges a custom split into a still-pending creation POST instead of queuing a second action', async () => {
+    await db.expenses.put(makeExpense({ id: 'exp-temp', vacationId: 'vac-2', isSplitCustom: false, splits: [] }))
+    await db.pendingActions.add({
+      seq: 1,
+      method: 'POST',
+      endpoint: '/vacations/vac-2/expenses',
+      localId: 'exp-temp',
+      entityType: 'expense',
+      status: 'pending',
+      body: { amount: 100, currency: 'EUR', description: 'Dinner', category: 'Food', date: '2026-01-01', paidByUserId: 'user-1' },
+    })
+
+    await updateExpenseLocal('vac-2', 'exp-temp', {
+      splits: [{ userId: 'user-1', weight: 0.9 }, { userId: 'user-2', weight: 0.1 }],
+    }, twoParticipantVacation)
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect((actions[0].body as Record<string, unknown>).splits).toEqual([
+      { userId: 'user-1', weight: 0.9 }, { userId: 'user-2', weight: 0.1 },
+    ])
+
+    const expense = await db.expenses.get('exp-temp')
+    expect(expense?.isSplitCustom).toBe(true)
   })
 })
 

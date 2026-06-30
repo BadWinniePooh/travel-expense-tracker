@@ -65,6 +65,8 @@ export function VacationDetailPage() {
     date: new Date().toISOString().split('T')[0],
   })
   const [expenseSubmitting, setExpenseSubmitting] = useState(false)
+  const [splitMode, setSplitMode] = useState<'default' | 'custom'>('default')
+  const [splitWeights, setSplitWeights] = useState<Record<string, string>>({})
 
   // Participant dialog
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false)
@@ -104,6 +106,9 @@ export function VacationDetailPage() {
     (u) => !vacation.participants.some((p) => p.userId === u.id)
   ) ?? []
 
+  const vacationDefaultSplit = (): Record<string, string> =>
+    Object.fromEntries(vacation.participants.map(p => [p.userId, String(p.splitWeight)]))
+
   const resetExpenseForm = () => {
     setExpenseForm({
       paidByUserId: vacation.participants.find(p => p.userId === user?.id)?.userId
@@ -115,6 +120,8 @@ export function VacationDetailPage() {
       category: 'Other',
       date: new Date().toISOString().split('T')[0],
     })
+    setSplitMode('default')
+    setSplitWeights(vacationDefaultSplit())
   }
 
   const handleOpenExpenseDialog = (expenseId?: string) => {
@@ -130,6 +137,13 @@ export function VacationDetailPage() {
           date: exp.date.split('T')[0],
         })
         setEditExpense(expenseId)
+        if (exp.isSplitCustom && exp.splits.length > 0) {
+          setSplitMode('custom')
+          setSplitWeights(Object.fromEntries(exp.splits.map(s => [s.userId, String(s.weight)])))
+        } else {
+          setSplitMode('default')
+          setSplitWeights(vacationDefaultSplit())
+        }
       }
     } else {
       resetExpenseForm()
@@ -138,10 +152,16 @@ export function VacationDetailPage() {
     setExpenseDialogOpen(true)
   }
 
+  const splitWeightSum = Object.values(splitWeights).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+
   const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (splitMode === 'custom' && Math.abs(splitWeightSum - 1) > 0.001) {
+      return
+    }
     setExpenseSubmitting(true)
     try {
+      const wasCustom = editExpense ? expenses?.find(e2 => e2.id === editExpense)?.isSplitCustom : false
       const data = {
         paidByUserId: expenseForm.paidByUserId,
         amount: parseFloat(expenseForm.amount),
@@ -149,6 +169,9 @@ export function VacationDetailPage() {
         description: expenseForm.description,
         category: expenseForm.category,
         date: new Date(expenseForm.date).toISOString(),
+        ...(splitMode === 'custom'
+          ? { splits: vacation.participants.map(p => ({ userId: p.userId, weight: parseFloat(splitWeights[p.userId] || '0') })) }
+          : wasCustom ? { resetSplit: true } : {}),
       }
       if (editExpense) {
         await updateExpenseLocal(id!, editExpense, data, vacation)
@@ -277,7 +300,12 @@ export function VacationDetailPage() {
                   {expenses.map((expense) => (
                     <TableRow key={expense.id}>
                       <TableCell>{format(new Date(expense.date), 'MMM d, yyyy')}</TableCell>
-                      <TableCell>{expense.description}</TableCell>
+                      <TableCell>
+                        {expense.description}
+                        {expense.isSplitCustom && (
+                          <Badge variant="secondary" className="ml-2 text-xs">Custom split</Badge>
+                        )}
+                      </TableCell>
                       <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
                       <TableCell>{expense.paidByUsername}</TableCell>
                       <TableCell className="text-right">{expense.amount.toFixed(2)} {expense.currency}</TableCell>
@@ -543,9 +571,54 @@ export function VacationDetailPage() {
                 />
               </div>
             </div>
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex items-center justify-between">
+                <Label>Split</Label>
+                {splitMode === 'default' ? (
+                  <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setSplitMode('custom')}>
+                    Customize for this expense
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0"
+                    onClick={() => { setSplitMode('default'); setSplitWeights(vacationDefaultSplit()) }}
+                  >
+                    Reset to vacation default
+                  </Button>
+                )}
+              </div>
+              {splitMode === 'default' ? (
+                <p className="text-xs text-muted-foreground">
+                  Follows the vacation's split — updates automatically if it changes.
+                </p>
+              ) : (
+                <>
+                  {vacation.participants.map((p) => (
+                    <div key={p.userId} className="flex items-center gap-2">
+                      <span className="text-sm flex-1">{p.username}</span>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        className="w-24"
+                        value={splitWeights[p.userId] ?? ''}
+                        onChange={(e) => setSplitWeights((w) => ({ ...w, [p.userId]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                  <p className={`text-xs ${Math.abs(splitWeightSum - 1) > 0.001 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    Total: {splitWeightSum.toFixed(4)} (must equal 1.0)
+                  </p>
+                </>
+              )}
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setExpenseDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={expenseSubmitting}>
+              <Button type="submit" disabled={expenseSubmitting || (splitMode === 'custom' && Math.abs(splitWeightSum - 1) > 0.001)}>
                 {editExpense ? 'Save Changes' : 'Add Expense'}
               </Button>
             </DialogFooter>

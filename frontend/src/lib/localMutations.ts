@@ -1,6 +1,14 @@
 import { db } from './db'
 import { enqueueMutation } from './syncEngine'
-import type { Vacation, Expense, User } from '@/types'
+import type { Vacation, Expense, User, ExpenseSplit } from '@/types'
+
+function resolveSplits(splits: { userId: string; weight: number }[], vacation: Vacation): ExpenseSplit[] {
+  return splits.map(s => ({
+    userId: s.userId,
+    weight: s.weight,
+    username: vacation.participants.find(p => p.userId === s.userId)?.username ?? '',
+  }))
+}
 
 // ── Vacations ──────────────────────────────────────────────────────────────────
 
@@ -49,13 +57,14 @@ export async function deleteVacationLocal(vacationId: string): Promise<void> {
 
 export async function createExpenseLocal(
   vacationId: string,
-  data: { paidByUserId: string; amount: number; currency: string; description: string; category: string; date: string },
+  data: { paidByUserId: string; amount: number; currency: string; description: string; category: string; date: string; splits?: { userId: string; weight: number }[] },
   vacation: Vacation
 ): Promise<string> {
   const id = crypto.randomUUID()
   const participant = vacation.participants.find(p => p.userId === data.paidByUserId)
   // Offline placeholder: same-currency expenses are exact; cross-currency uses 1:1 until server corrects it on sync
   const amountInBaseCurrency = data.currency === vacation.baseCurrency ? data.amount : data.amount
+  const isSplitCustom = !!data.splits
   await db.expenses.put({
     id,
     vacationId,
@@ -68,6 +77,8 @@ export async function createExpenseLocal(
     category: data.category,
     date: data.date,
     createdAt: new Date().toISOString(),
+    isSplitCustom,
+    splits: isSplitCustom ? resolveSplits(data.splits!, vacation) : [],
   } as Expense)
   await enqueueMutation({ method: 'POST', endpoint: `/vacations/${vacationId}/expenses`, body: data as Record<string, unknown>, localId: id, entityType: 'expense' })
   return id
@@ -76,12 +87,13 @@ export async function createExpenseLocal(
 export async function updateExpenseLocal(
   vacationId: string,
   expenseId: string,
-  data: { paidByUserId?: string; amount?: number; currency?: string; description?: string; category?: string; date?: string },
+  data: { paidByUserId?: string; amount?: number; currency?: string; description?: string; category?: string; date?: string; splits?: { userId: string; weight: number }[]; resetSplit?: boolean },
   vacation: Vacation
 ): Promise<void> {
   const existing = await db.expenses.get(expenseId)
   if (!existing) return
-  const updates: Partial<Expense> = { ...data }
+  const { splits, resetSplit, ...fieldUpdates } = data
+  const updates: Partial<Expense> = { ...fieldUpdates }
   if (data.paidByUserId) {
     updates.paidByUsername = vacation.participants.find(p => p.userId === data.paidByUserId)?.username ?? existing.paidByUsername
   }
@@ -89,6 +101,13 @@ export async function updateExpenseLocal(
   const newCurrency = data.currency ?? existing.currency
   // Offline placeholder — server will correct cross-currency values on sync
   updates.amountInBaseCurrency = newCurrency === vacation.baseCurrency ? newAmount : newAmount
+  if (splits) {
+    updates.isSplitCustom = true
+    updates.splits = resolveSplits(splits, vacation)
+  } else if (resetSplit) {
+    updates.isSplitCustom = false
+    updates.splits = []
+  }
   await db.expenses.update(expenseId, updates)
 
   // If the expense hasn't been created on the server yet, merge the edit into the
@@ -97,8 +116,11 @@ export async function updateExpenseLocal(
     .filter(a => (a.status === 'pending' || a.status === 'failed') && a.method === 'POST' && a.localId === expenseId)
     .first()
   if (pendingPost) {
+    const mergedBody: Record<string, unknown> = { ...pendingPost.body, ...fieldUpdates }
+    if (splits) mergedBody.splits = splits
+    else if (resetSplit) mergedBody.splits = undefined
     await db.pendingActions.update(pendingPost.id!, {
-      body: { ...pendingPost.body, ...data } as Record<string, unknown>,
+      body: mergedBody,
       status: 'pending',
       error: undefined,
     })

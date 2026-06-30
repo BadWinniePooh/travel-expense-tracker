@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Vacation> Vacations => Set<Vacation>();
     public DbSet<VacationParticipant> VacationParticipants => Set<VacationParticipant>();
     public DbSet<Expense> Expenses => Set<Expense>();
+    public DbSet<ExpenseSplit> ExpenseSplits => Set<ExpenseSplit>();
     public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -66,6 +67,21 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Amount).HasPrecision(18, 4);
             entity.Property(e => e.AmountInBaseCurrency).HasPrecision(18, 4);
             entity.Property(e => e.Category).HasConversion<string>();
+        });
+
+        // ExpenseSplit
+        modelBuilder.Entity<ExpenseSplit>(entity =>
+        {
+            entity.HasKey(es => new { es.ExpenseId, es.UserId });
+            entity.HasOne(es => es.Expense)
+                  .WithMany(e => e.Splits)
+                  .HasForeignKey(es => es.ExpenseId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(es => es.User)
+                  .WithMany()
+                  .HasForeignKey(es => es.UserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(es => es.Weight).HasPrecision(10, 6);
         });
 
         // ExchangeRate
