@@ -20,6 +20,12 @@ export default defineConfig({
         'src/lib/localMutations.ts',
         'src/lib/syncEngine.ts',
       ],
+      thresholds: {
+        statements: 100,
+        lines: 100,
+        functions: 100,
+        branches: 92,
+      },
     },
   },
   plugins: [
