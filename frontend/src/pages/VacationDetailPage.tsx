@@ -23,15 +23,46 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider'
 import { useAuth } from '@/contexts/AuthContext'
 import { useSync } from '@/contexts/SyncContext'
-import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight, ArrowUp, ArrowDown, ArrowUpDown, Search } from 'lucide-react'
 import { format } from 'date-fns'
-import type { ExpenseCategory } from '@/types'
+import type { Expense, ExpenseCategory } from '@/types'
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Accommodation', 'Food', 'Transport', 'Activities', 'Shopping', 'Healthcare', 'Other',
 ]
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK', 'NOK', 'DKK']
+
+type ExpenseSortField = 'date' | 'description' | 'category' | 'paidBy' | 'amount' | 'amountBase'
+
+const SORT_COLUMNS: { field: ExpenseSortField; label: string }[] = [
+  { field: 'date', label: 'Date' },
+  { field: 'description', label: 'Description' },
+  { field: 'category', label: 'Category' },
+  { field: 'paidBy', label: 'Paid By' },
+  { field: 'amount', label: 'Amount' },
+  { field: 'amountBase', label: 'In Base Currency' },
+]
+
+function sortExpenses(list: Expense[], field: ExpenseSortField, dir: 'asc' | 'desc'): Expense[] {
+  const sorted = [...list].sort((a, b) => {
+    switch (field) {
+      case 'date':
+        return new Date(a.date).getTime() - new Date(b.date).getTime()
+      case 'description':
+        return a.description.localeCompare(b.description)
+      case 'category':
+        return a.category.localeCompare(b.category)
+      case 'paidBy':
+        return a.paidByUsername.localeCompare(b.paidByUsername)
+      case 'amount':
+        return a.amount - b.amount
+      case 'amountBase':
+        return a.amountInBaseCurrency - b.amountInBaseCurrency
+    }
+  })
+  return dir === 'asc' ? sorted : sorted.reverse()
+}
 
 // Dragging one participant's slider to `newValue` rescales every other participant's weight
 // proportionally so the set always sums to 1.0, instead of leaving the total to drift.
@@ -106,6 +137,14 @@ export function VacationDetailPage() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+
+  // Expense table view state — purely cosmetic, never affects summary calculations
+  // (those always run against the full, unfiltered `expenses` list).
+  const [expenseSearch, setExpenseSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | 'all'>('all')
+  const [paidByFilter, setPaidByFilter] = useState<string>('all')
+  const [sortField, setSortField] = useState<ExpenseSortField>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   // vacation === undefined means Dexie hasn't loaded yet; null/missing means not found
   if (vacation === undefined) {
@@ -249,6 +288,29 @@ export function VacationDetailPage() {
     }
   }
 
+  // Display-only view of `expenses` — search/filter/sort never touches the
+  // underlying list that computeSummary() runs against.
+  const visibleExpenses = (() => {
+    if (!expenses) return expenses
+    const query = expenseSearch.trim().toLowerCase()
+    const filtered = expenses.filter((e) => {
+      if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
+      if (paidByFilter !== 'all' && e.paidByUserId !== paidByFilter) return false
+      if (query && !e.description.toLowerCase().includes(query)) return false
+      return true
+    })
+    return sortExpenses(filtered, sortField, sortDir)
+  })()
+
+  const toggleSort = (field: ExpenseSortField) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
   const summary = expenses ? computeSummary(vacation, expenses) : undefined
 
   return (
@@ -312,56 +374,110 @@ export function VacationDetailPage() {
           )}
 
           {expenses && expenses.length > 0 && (
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Paid By</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead className="text-right">In {vacation.baseCurrency}</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {expenses.map((expense) => (
-                    <TableRow key={expense.id}>
-                      <TableCell>{format(new Date(expense.date), 'MMM d, yyyy')}</TableCell>
-                      <TableCell>
-                        {expense.description}
-                        {expense.isSplitCustom && (
-                          <Badge variant="secondary" className="ml-2 text-xs">Custom split</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
-                      <TableCell>{expense.paidByUsername}</TableCell>
-                      <TableCell className="text-right">{expense.amount.toFixed(2)} {expense.currency}</TableCell>
-                      <TableCell className="text-right">{expense.amountInBaseCurrency.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1 justify-end">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenExpenseDialog(expense.id)}
+            <>
+              <div className="flex flex-wrap gap-3 mb-4">
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search description..."
+                    value={expenseSearch}
+                    onChange={(e) => setExpenseSearch(e.target.value)}
+                    className="pl-8"
+                  />
+                </div>
+                <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as ExpenseCategory | 'all')}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All categories</SelectItem>
+                    {EXPENSE_CATEGORIES.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={paidByFilter} onValueChange={setPaidByFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Paid by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All payers</SelectItem>
+                    {vacation.participants.map((p) => (
+                      <SelectItem key={p.userId} value={p.userId}>{p.username}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {visibleExpenses?.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  No expenses match your search/filters.
+                </div>
+              )}
+
+              {visibleExpenses && visibleExpenses.length > 0 && (
+                <Card>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {SORT_COLUMNS.map(({ field, label }) => (
+                          <TableHead
+                            key={field}
+                            className={`cursor-pointer select-none ${field === 'amount' || field === 'amountBase' ? 'text-right' : ''}`}
+                            onClick={() => toggleSort(field)}
                           >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteExpenseLocal(id!, expense.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
+                            <span className={`inline-flex items-center gap-1 ${field === 'amount' || field === 'amountBase' ? 'justify-end w-full' : ''}`}>
+                              {label === 'In Base Currency' ? `In ${vacation.baseCurrency}` : label}
+                              {sortField === field ? (
+                                sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                              ) : (
+                                <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
+                              )}
+                            </span>
+                          </TableHead>
+                        ))}
+                        <TableHead></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visibleExpenses.map((expense) => (
+                        <TableRow key={expense.id}>
+                          <TableCell>{format(new Date(expense.date), 'MMM d, yyyy')}</TableCell>
+                          <TableCell>
+                            {expense.description}
+                            {expense.isSplitCustom && (
+                              <Badge variant="secondary" className="ml-2 text-xs">Custom split</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
+                          <TableCell>{expense.paidByUsername}</TableCell>
+                          <TableCell className="text-right">{expense.amount.toFixed(2)} {expense.currency}</TableCell>
+                          <TableCell className="text-right">{expense.amountInBaseCurrency.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1 justify-end">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleOpenExpenseDialog(expense.id)}
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteExpenseLocal(id!, expense.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              )}
+            </>
           )}
         </TabsContent>
 
