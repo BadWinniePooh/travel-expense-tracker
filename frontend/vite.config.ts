@@ -10,6 +10,17 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: [
+        'src/lib/summary.ts',
+        'src/lib/expenseTable.ts',
+        'src/lib/splitRedistribution.ts',
+        'src/lib/localMutations.ts',
+        'src/lib/syncEngine.ts',
+      ],
+    },
   },
   plugins: [
     react(),

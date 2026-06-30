@@ -13,10 +13,14 @@ vi.mock('../syncEngine', async (importOriginal) => {
 })
 
 import {
+  createVacationLocal,
   createExpenseLocal,
   updateExpenseLocal,
   deleteExpenseLocal,
   deleteVacationLocal,
+  addParticipantLocal,
+  updateParticipantLocal,
+  removeParticipantLocal,
 } from '../localMutations'
 
 // ---------------------------------------------------------------------------
@@ -150,6 +154,17 @@ describe('updateExpenseLocal', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0].method).toBe('PUT')
     expect(actions[0].endpoint).toContain('real-exp')
+  })
+
+  it('reassigning paidByUserId updates the cached paidByUsername from the vacation participants', async () => {
+    await db.vacations.put(twoParticipantVacation)
+    await db.expenses.put(makeExpense({ id: 'real-exp', vacationId: 'vac-2', paidByUserId: 'user-1', paidByUsername: 'Alice' }))
+
+    await updateExpenseLocal('vac-2', 'real-exp', { paidByUserId: 'user-2' }, twoParticipantVacation)
+
+    const expense = await db.expenses.get('real-exp')
+    expect(expense?.paidByUserId).toBe('user-2')
+    expect(expense?.paidByUsername).toBe('Bob')
   })
 })
 
@@ -335,5 +350,139 @@ describe('deleteVacationLocal', () => {
     // No DELETE action should be queued — the vacation never existed on the server
     const actions = await db.pendingActions.toArray()
     expect(actions).toHaveLength(0)
+  })
+
+  it('when the vacation exists on the server, deletes locally and queues DELETE', async () => {
+    await deleteVacationLocal('vac-1')
+
+    expect(await db.vacations.get('vac-1')).toBeUndefined()
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('DELETE')
+    expect(actions[0].endpoint).toBe('/vacations/vac-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createVacationLocal
+// ---------------------------------------------------------------------------
+
+describe('createVacationLocal', () => {
+  it('stores the vacation with the creator as sole participant and queues POST', async () => {
+    const currentUser = { id: 'user-1', username: 'Alice', email: 'alice@test.com', role: 'Member' as const, createdAt: '2026-01-01T00:00:00.000Z' }
+
+    const vacationId = await createVacationLocal(
+      { name: 'Trip', baseCurrency: 'EUR', startDate: '2026-02-01', endDate: '2026-02-10' },
+      currentUser
+    )
+
+    const vacation = await db.vacations.get(vacationId)
+    expect(vacation?.name).toBe('Trip')
+    expect(vacation?.participants).toEqual([
+      { userId: 'user-1', username: 'Alice', email: 'alice@test.com', splitWeight: 1.0 },
+    ])
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('POST')
+    expect(actions[0].endpoint).toBe('/vacations')
+    expect(actions[0].localId).toBe(vacationId)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// updateExpenseLocal — extra branches
+// ---------------------------------------------------------------------------
+
+describe('updateExpenseLocal edge cases', () => {
+  it('is a no-op when the expense does not exist locally', async () => {
+    await updateExpenseLocal('vac-1', 'missing-exp', { description: 'new' }, testVacation)
+    expect(await db.pendingActions.count()).toBe(0)
+  })
+
+  it('merges resetSplit into a still-pending creation POST instead of queuing a PUT', async () => {
+    await db.expenses.put(makeExpense({ id: 'exp-temp', isSplitCustom: true, splits: [{ userId: 'user-1', weight: 1, username: 'Alice' }] }))
+    await db.pendingActions.add({
+      seq: 1,
+      method: 'POST',
+      endpoint: '/vacations/vac-1/expenses',
+      localId: 'exp-temp',
+      entityType: 'expense',
+      status: 'pending',
+      body: { amount: 50, currency: 'EUR', description: 'Test', category: 'Food', date: '2026-01-01', paidByUserId: 'user-1', splits: [{ userId: 'user-1', weight: 1 }] },
+    })
+
+    await updateExpenseLocal('vac-1', 'exp-temp', { resetSplit: true }, testVacation)
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('POST')
+    expect((actions[0].body as Record<string, unknown>).splits).toBeUndefined()
+
+    const expense = await db.expenses.get('exp-temp')
+    expect(expense?.isSplitCustom).toBe(false)
+    expect(expense?.splits).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Participants
+// ---------------------------------------------------------------------------
+
+describe('addParticipantLocal', () => {
+  it('appends the participant locally and queues POST', async () => {
+    await addParticipantLocal('vac-1', { userId: 'user-2', splitWeight: 0.5 }, { id: 'user-2', username: 'Bob', email: 'bob@test.com' })
+
+    const vacation = await db.vacations.get('vac-1')
+    expect(vacation?.participants).toContainEqual({ userId: 'user-2', username: 'Bob', email: 'bob@test.com', splitWeight: 0.5 })
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('POST')
+    expect(actions[0].endpoint).toBe('/vacations/vac-1/participants')
+  })
+
+  it('is a no-op when the vacation does not exist locally', async () => {
+    await addParticipantLocal('missing-vac', { userId: 'user-2', splitWeight: 0.5 }, { id: 'user-2', username: 'Bob', email: 'bob@test.com' })
+    expect(await db.pendingActions.count()).toBe(0)
+  })
+})
+
+describe('updateParticipantLocal', () => {
+  it('updates the split weight locally and queues PUT', async () => {
+    await updateParticipantLocal('vac-1', 'user-1', 0.75)
+
+    const vacation = await db.vacations.get('vac-1')
+    expect(vacation?.participants[0].splitWeight).toBe(0.75)
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('PUT')
+    expect(actions[0].endpoint).toBe('/vacations/vac-1/participants/user-1')
+    expect(actions[0].body).toEqual({ splitWeight: 0.75 })
+  })
+
+  it('is a no-op when the vacation does not exist locally', async () => {
+    await updateParticipantLocal('missing-vac', 'user-1', 0.5)
+    expect(await db.pendingActions.count()).toBe(0)
+  })
+})
+
+describe('removeParticipantLocal', () => {
+  it('removes the participant locally and queues DELETE', async () => {
+    await removeParticipantLocal('vac-1', 'user-1')
+
+    const vacation = await db.vacations.get('vac-1')
+    expect(vacation?.participants).toEqual([])
+
+    const actions = await db.pendingActions.toArray()
+    expect(actions).toHaveLength(1)
+    expect(actions[0].method).toBe('DELETE')
+    expect(actions[0].endpoint).toBe('/vacations/vac-1/participants/user-1')
+  })
+
+  it('is a no-op when the vacation does not exist locally', async () => {
+    await removeParticipantLocal('missing-vac', 'user-1')
+    expect(await db.pendingActions.count()).toBe(0)
   })
 })

@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { computeSummary } from '@/lib/summary'
+import { sortExpenses, filterExpenses, SORT_COLUMNS, type ExpenseSortField } from '@/lib/expenseTable'
+import { redistributeSplit } from '@/lib/splitRedistribution'
 import {
   createExpenseLocal, updateExpenseLocal, deleteExpenseLocal,
   addParticipantLocal, updateParticipantLocal, removeParticipantLocal,
@@ -25,70 +27,13 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useSync } from '@/contexts/SyncContext'
 import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight, ArrowUp, ArrowDown, ArrowUpDown, Search } from 'lucide-react'
 import { format } from 'date-fns'
-import type { Expense, ExpenseCategory } from '@/types'
+import type { ExpenseCategory } from '@/types'
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Accommodation', 'Food', 'Transport', 'Activities', 'Shopping', 'Healthcare', 'Other',
 ]
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK', 'NOK', 'DKK']
-
-type ExpenseSortField = 'date' | 'description' | 'category' | 'paidBy' | 'amount' | 'amountBase'
-
-const SORT_COLUMNS: { field: ExpenseSortField; label: string }[] = [
-  { field: 'date', label: 'Date' },
-  { field: 'description', label: 'Description' },
-  { field: 'category', label: 'Category' },
-  { field: 'paidBy', label: 'Paid By' },
-  { field: 'amount', label: 'Amount' },
-  { field: 'amountBase', label: 'In Base Currency' },
-]
-
-function sortExpenses(list: Expense[], field: ExpenseSortField, dir: 'asc' | 'desc'): Expense[] {
-  const sorted = [...list].sort((a, b) => {
-    switch (field) {
-      case 'date':
-        return new Date(a.date).getTime() - new Date(b.date).getTime()
-      case 'description':
-        return a.description.localeCompare(b.description)
-      case 'category':
-        return a.category.localeCompare(b.category)
-      case 'paidBy':
-        return a.paidByUsername.localeCompare(b.paidByUsername)
-      case 'amount':
-        return a.amount - b.amount
-      case 'amountBase':
-        return a.amountInBaseCurrency - b.amountInBaseCurrency
-    }
-  })
-  return dir === 'asc' ? sorted : sorted.reverse()
-}
-
-// Dragging one participant's slider to `newValue` rescales every other participant's weight
-// proportionally so the set always sums to 1.0, instead of leaving the total to drift.
-function redistributeSplit(
-  weights: Record<string, string>,
-  changedUserId: string,
-  newValue: number
-): Record<string, string> {
-  const others = Object.keys(weights).filter(k => k !== changedUserId)
-  const oldRemaining = others.reduce((s, k) => s + (parseFloat(weights[k]) || 0), 0)
-  const newRemaining = Math.max(0, 1 - newValue)
-  const next: Record<string, string> = { ...weights, [changedUserId]: String(newValue) }
-  if (others.length === 0) return next
-  if (oldRemaining > 0.0001) {
-    const scale = newRemaining / oldRemaining
-    others.forEach(k => { next[k] = String((parseFloat(weights[k]) || 0) * scale) })
-  } else {
-    const even = newRemaining / others.length
-    others.forEach(k => { next[k] = String(even) })
-  }
-  // Correct floating-point drift so the set sums to exactly 1.0
-  const total = Object.values(next).reduce((s, v) => s + (parseFloat(v) || 0), 0)
-  const lastOther = others[others.length - 1]
-  next[lastOther] = String((parseFloat(next[lastOther]) || 0) + (1 - total))
-  return next
-}
 
 export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -290,17 +235,13 @@ export function VacationDetailPage() {
 
   // Display-only view of `expenses` — search/filter/sort never touches the
   // underlying list that computeSummary() runs against.
-  const visibleExpenses = (() => {
-    if (!expenses) return expenses
-    const query = expenseSearch.trim().toLowerCase()
-    const filtered = expenses.filter((e) => {
-      if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
-      if (paidByFilter !== 'all' && e.paidByUserId !== paidByFilter) return false
-      if (query && !e.description.toLowerCase().includes(query)) return false
-      return true
-    })
-    return sortExpenses(filtered, sortField, sortDir)
-  })()
+  const visibleExpenses = expenses
+    ? sortExpenses(
+        filterExpenses(expenses, { search: expenseSearch, category: categoryFilter, paidByUserId: paidByFilter }),
+        sortField,
+        sortDir
+      )
+    : expenses
 
   const toggleSort = (field: ExpenseSortField) => {
     if (sortField === field) {
