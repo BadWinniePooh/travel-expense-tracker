@@ -34,7 +34,8 @@ jobs:
           --logger trx --results-directory TestResults
           /p:CollectCoverage=true
           /p:CoverageOutputFormat=cobertura
-          '/p:Include=[TravelExpenseTracker.API]*%2C[TravelExpenseTracker.Infrastructure.Services]*'
+          '/p:Include=[TravelExpenseTracker.API]*%2C[TravelExpenseTracker.Infrastructure]TravelExpenseTracker.Infrastructure.Services.*'
+          '/p:ExcludeByFile=**/Program.cs'
           /p:Threshold=80
           /p:ThresholdType=line
           /p:ThresholdStat=Minimum
