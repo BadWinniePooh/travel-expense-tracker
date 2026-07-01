@@ -189,14 +189,16 @@ public class UsersControllerTests
     public async Task UpdateUser_WithPassword_HashesNewPassword()
     {
         var user = MakeUser("alice");
+        User? capturedUser = null;
         _userRepo.Setup(r => r.GetByIdAsync(user.Id)).ReturnsAsync(user);
-        _userRepo.Setup(r => r.UpdateAsync(It.IsAny<User>())).ReturnsAsync(user);
+        _userRepo.Setup(r => r.UpdateAsync(It.IsAny<User>()))
+            .Callback<User>(u => capturedUser = u)
+            .ReturnsAsync(user);
 
         var result = await MakeController().UpdateUser(user.Id, new UpdateUserRequest(null, null, "newpass", null));
 
         result.Result.Should().BeOfType<OkObjectResult>();
-        _userRepo.Verify(r => r.UpdateAsync(It.Is<User>(u =>
-            BCrypt.Net.BCrypt.Verify("newpass", u.PasswordHash))), Times.Once);
+        BCrypt.Net.BCrypt.Verify("newpass", capturedUser!.PasswordHash).Should().BeTrue();
     }
 
     [Fact]
