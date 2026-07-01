@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using Xunit;
 using TravelExpenseTracker.API.Services;
 using TravelExpenseTracker.Core.Models;
 
