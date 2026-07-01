@@ -29,8 +29,7 @@ jobs:
         run: dotnet build TravelExpenseTracker.sln --no-restore -c Release
 
       - name: Test
-        run: dotnet test TravelExpenseTracker.sln --no-build -c Release --logger trx --results-directory TestResults
-        continue-on-error: true  # no test project yet; remove when tests are added
+        run: dotnet test TravelExpenseTracker.sln --no-build -c Release --logger trx --results-directory TestResults --collect:"XPlat Code Coverage"
 
   build-frontend:
     name: Build & Test Frontend
