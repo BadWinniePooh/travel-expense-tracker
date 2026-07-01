@@ -76,7 +76,7 @@ export function VacationDetailPage() {
   // Participant dialog
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false)
   const [participantUserId, setParticipantUserId] = useState('')
-  const [participantWeight, setParticipantWeight] = useState('')
+  const [participantWeight, setParticipantWeight] = useState(50)
   const [editParticipantId, setEditParticipantId] = useState<string | null>(null)
   const [participantSubmitting, setParticipantSubmitting] = useState(false)
 
@@ -205,7 +205,7 @@ export function VacationDetailPage() {
     e.preventDefault()
     setParticipantSubmitting(true)
     try {
-      const splitWeight = parseFloat(participantWeight)
+      const splitWeight = participantWeight / 100
       if (editParticipantId) {
         await updateParticipantLocal(id!, editParticipantId, splitWeight)
       } else {
@@ -217,7 +217,7 @@ export function VacationDetailPage() {
       setParticipantDialogOpen(false)
       setEditParticipantId(null)
       setParticipantUserId('')
-      setParticipantWeight('')
+      setParticipantWeight(50)
     } finally {
       setParticipantSubmitting(false)
     }
@@ -430,7 +430,7 @@ export function VacationDetailPage() {
               <Button onClick={() => {
                 setEditParticipantId(null)
                 setParticipantUserId('')
-                setParticipantWeight('')
+                setParticipantWeight(Math.round(100 / (vacation.participants.length + 1)))
                 setParticipantDialogOpen(true)
               }}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -465,7 +465,7 @@ export function VacationDetailPage() {
                             size="icon"
                             onClick={() => {
                               setEditParticipantId(p.userId)
-                              setParticipantWeight(String(p.splitWeight))
+                              setParticipantWeight(Math.round(p.splitWeight * 100))
                               setParticipantDialogOpen(true)
                             }}
                           >
@@ -737,19 +737,29 @@ export function VacationDetailPage() {
                 </Select>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>Split Weight (0.0 – 1.0)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0.01"
-                max="1"
-                value={participantWeight}
-                onChange={(e) => setParticipantWeight(e.target.value)}
-                placeholder="0.5"
-                required
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <Label>Split Weight</Label>
+                <span className="text-sm font-medium tabular-nums">{participantWeight}%</span>
+              </div>
+              <Slider
+                value={[participantWeight]}
+                min={1}
+                max={100}
+                step={1}
+                onValueChange={([v]) => setParticipantWeight(v)}
               />
-              <p className="text-xs text-muted-foreground">All participants' weights should sum to 1.0</p>
+              {(() => {
+                const otherSum = vacation.participants
+                  .filter(p => p.userId !== editParticipantId)
+                  .reduce((s, p) => s + p.splitWeight, 0)
+                const total = Math.round((otherSum + participantWeight / 100) * 100)
+                return (
+                  <p className={`text-xs ${total === 100 ? 'text-muted-foreground' : 'text-amber-500'}`}>
+                    Total across all participants: {total}%{total !== 100 ? ' — adjust other weights to reach 100%' : ''}
+                  </p>
+                )
+              })()}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setParticipantDialogOpen(false)}>Cancel</Button>
