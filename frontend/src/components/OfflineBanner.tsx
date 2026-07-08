@@ -1,20 +1,22 @@
 import { WifiOff, RefreshCw, CheckCircle2 } from 'lucide-react'
 import { useSync } from '@/contexts/SyncContext'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export function OfflineBanner() {
   const { isOnline, pendingCount } = useSync()
   const [justSynced, setJustSynced] = useState(false)
+  const prevPendingRef = useRef(pendingCount)
 
-  // Show a brief "Synced" confirmation after pending count drops to 0
+  // Show a brief "Synced" confirmation when pendingCount transitions >0 → 0 while online
   useEffect(() => {
-    if (isOnline && pendingCount === 0 && !justSynced) return
-    if (isOnline && pendingCount === 0) {
+    const wasPositive = prevPendingRef.current > 0
+    prevPendingRef.current = pendingCount
+    if (isOnline && pendingCount === 0 && wasPositive) {
       setJustSynced(true)
       const t = setTimeout(() => setJustSynced(false), 3000)
       return () => clearTimeout(t)
     }
-  }, [isOnline, pendingCount, justSynced])
+  }, [isOnline, pendingCount])
 
   if (isOnline && pendingCount === 0 && !justSynced) return null
 

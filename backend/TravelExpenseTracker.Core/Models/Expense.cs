@@ -26,4 +26,5 @@ public class Expense
 
     public Vacation Vacation { get; set; } = null!;
     public User PaidBy { get; set; } = null!;
+    public ICollection<ExpenseSplit> Splits { get; set; } = new List<ExpenseSplit>();
 }

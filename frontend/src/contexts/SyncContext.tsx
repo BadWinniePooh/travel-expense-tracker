@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { type WorkboxMessageEvent } from 'workbox-window'
-import { wb } from '@/lib/pwa'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/lib/db'
+import { seedFromServer, replayPendingActions } from '@/lib/syncEngine'
 
 interface SyncContextValue {
   isOnline: boolean
@@ -12,10 +12,13 @@ const SyncContext = createContext<SyncContextValue>({ isOnline: true, pendingCou
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
-  const [pendingCount, setPendingCount] = useState(0)
-  const queryClient = useQueryClient()
 
-  // Track browser online/offline state
+  const pendingCount = useLiveQuery(
+    () => db.pendingActions.where('status').equals('pending').count(),
+    [],
+    0
+  ) ?? 0
+
   useEffect(() => {
     const goOnline = () => setIsOnline(true)
     const goOffline = () => setIsOnline(false)
@@ -27,41 +30,19 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Count mutations queued while offline (dispatched by axios interceptor)
+  // Seed local DB on first load (if online and authenticated)
   useEffect(() => {
-    const handler = () => setPendingCount((n) => n + 1)
-    window.addEventListener('sync-queued', handler)
-    return () => window.removeEventListener('sync-queued', handler)
+    if (navigator.onLine && localStorage.getItem('token')) {
+      replayPendingActions().then(() => seedFromServer())
+    }
   }, [])
 
-  // When service worker signals sync is complete, refresh all cached queries
+  // On reconnect: replay queued mutations, then refresh local DB from server
   useEffect(() => {
-    if (!wb) return
-    const handler = (event: WorkboxMessageEvent) => {
-      if ((event.data as { type?: string })?.type === 'SYNC_COMPLETE') {
-        setPendingCount(0)
-        queryClient.invalidateQueries()
-      }
+    if (isOnline && localStorage.getItem('token')) {
+      replayPendingActions().then(() => seedFromServer())
     }
-    wb.addEventListener('message', handler)
-    return () => wb?.removeEventListener('message', handler)
-  }, [queryClient])
-
-  // When coming back online, explicitly register the Background Sync tag so
-  // Chrome can replay queued requests even if the SW hasn't fired yet.
-  useEffect(() => {
-    if (!isOnline || pendingCount === 0) return
-    navigator.serviceWorker?.ready
-      .then((reg) => {
-        const syncReg = reg as ServiceWorkerRegistration & {
-          sync?: { register(tag: string): Promise<void> }
-        }
-        return syncReg.sync?.register('offline-mutations')
-      })
-      .catch(() => {
-        // Browser may not support Background Sync API — Workbox handles fallback
-      })
-  }, [isOnline, pendingCount])
+  }, [isOnline])
 
   return (
     <SyncContext.Provider value={{ isOnline, pendingCount }}>

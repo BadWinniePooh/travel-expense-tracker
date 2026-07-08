@@ -9,4 +9,6 @@ public interface IExpenseRepository
     Task<Expense> CreateAsync(Expense expense);
     Task<Expense> UpdateAsync(Expense expense);
     Task DeleteAsync(Guid id);
+    Task SetSplitAsync(Guid expenseId, IEnumerable<ExpenseSplit> splits);
+    Task ClearSplitAsync(Guid expenseId);
 }

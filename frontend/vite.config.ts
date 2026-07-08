@@ -4,6 +4,30 @@ import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: [
+        'src/lib/summary.ts',
+        'src/lib/expenseTable.ts',
+        'src/lib/splitRedistribution.ts',
+        'src/lib/localMutations.ts',
+        'src/lib/syncEngine.ts',
+      ],
+      thresholds: {
+        statements: 100,
+        lines: 100,
+        functions: 100,
+        branches: 92,
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
@@ -24,12 +48,10 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         icons: [
-          {
-            src: '/icons/icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable',
-          },
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: '/icons/icon.svg',     sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
         ],
       },
       devOptions: {

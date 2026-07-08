@@ -15,11 +15,12 @@ public class ExpenseRepository : IExpenseRepository
     }
 
     public async Task<Expense?> GetByIdAsync(Guid id) =>
-        await _context.Expenses.Include(e => e.PaidBy).FirstOrDefaultAsync(e => e.Id == id);
+        await _context.Expenses.Include(e => e.PaidBy).Include(e => e.Splits).FirstOrDefaultAsync(e => e.Id == id);
 
     public async Task<IEnumerable<Expense>> GetByVacationIdAsync(Guid vacationId) =>
         await _context.Expenses
             .Include(e => e.PaidBy)
+            .Include(e => e.Splits)
             .Where(e => e.VacationId == vacationId)
             .OrderByDescending(e => e.Date)
             .ToListAsync();
@@ -44,6 +45,24 @@ public class ExpenseRepository : IExpenseRepository
         if (expense != null)
         {
             _context.Expenses.Remove(expense);
+            await _context.SaveChangesAsync();
+        }
+    }
+
+    public async Task SetSplitAsync(Guid expenseId, IEnumerable<ExpenseSplit> splits)
+    {
+        var existing = await _context.ExpenseSplits.Where(es => es.ExpenseId == expenseId).ToListAsync();
+        _context.ExpenseSplits.RemoveRange(existing);
+        await _context.ExpenseSplits.AddRangeAsync(splits);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task ClearSplitAsync(Guid expenseId)
+    {
+        var existing = await _context.ExpenseSplits.Where(es => es.ExpenseId == expenseId).ToListAsync();
+        if (existing.Count > 0)
+        {
+            _context.ExpenseSplits.RemoveRange(existing);
             await _context.SaveChangesAsync();
         }
     }

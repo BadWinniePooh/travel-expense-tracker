@@ -20,7 +20,7 @@ public class JwtService
         var secret = _configuration["Jwt:Secret"] ?? throw new InvalidOperationException("JWT Secret not configured");
         var issuer = _configuration["Jwt:Issuer"] ?? "travel-expense-tracker";
         var audience = _configuration["Jwt:Audience"] ?? "travel-expense-tracker";
-        var expiryMinutes = int.Parse(_configuration["Jwt:ExpiryMinutes"] ?? "60");
+        var expiryMinutes = int.Parse(_configuration["Jwt:ExpiryMinutes"] ?? "43200");
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

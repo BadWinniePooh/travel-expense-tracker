@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { createVacation } from '@/api/vacations'
+import { useNavigate, Link } from 'react-router-dom'
+import { useAuth } from '@/contexts/AuthContext'
+import { createVacationLocal } from '@/lib/localMutations'
 import { Layout } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,37 +9,39 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ArrowLeft } from 'lucide-react'
-import { Link } from 'react-router-dom'
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK', 'NOK', 'DKK']
 
 export function NewVacationPage() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [baseCurrency, setBaseCurrency] = useState('EUR')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const mutation = useMutation({
-    mutationFn: createVacation,
-    onSuccess: (vacation) => {
-      queryClient.invalidateQueries({ queryKey: ['vacations'] })
-      navigate(`/vacations/${vacation.id}`)
-    },
-  })
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    mutation.mutate({
-      name,
-      description: description || undefined,
-      baseCurrency,
-      startDate: new Date(startDate).toISOString(),
-      endDate: new Date(endDate).toISOString(),
-    })
+    if (!user) return
+    setIsSubmitting(true)
+    try {
+      const id = await createVacationLocal(
+        {
+          name,
+          description: description || undefined,
+          baseCurrency,
+          startDate: new Date(startDate).toISOString(),
+          endDate: new Date(endDate).toISOString(),
+        },
+        user
+      )
+      navigate(`/vacations/${id}`)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -119,13 +121,9 @@ export function NewVacationPage() {
                 </div>
               </div>
 
-              {mutation.isError && (
-                <p className="text-sm text-destructive">Failed to create vacation. Please try again.</p>
-              )}
-
               <div className="flex gap-3 pt-2">
-                <Button type="submit" disabled={mutation.isPending}>
-                  {mutation.isPending ? 'Creating...' : 'Create Vacation'}
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? 'Creating...' : 'Create Vacation'}
                 </Button>
                 <Button type="button" variant="outline" asChild>
                   <Link to="/">Cancel</Link>

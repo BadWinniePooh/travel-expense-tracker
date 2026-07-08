@@ -1,11 +1,16 @@
 import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/lib/db'
+import { computeSummary } from '@/lib/summary'
+import { sortExpenses, filterExpenses, SORT_COLUMNS, type ExpenseSortField } from '@/lib/expenseTable'
+import { redistributeSplit } from '@/lib/splitRedistribution'
 import {
-  getVacation, getExpenses, getSummary,
-  createExpense, updateExpense, deleteExpense,
-  addParticipant, updateParticipant, removeParticipant,
-} from '@/api/vacations'
+  createExpenseLocal, updateExpenseLocal, deleteExpenseLocal,
+  addParticipantLocal, updateParticipantLocal, removeParticipantLocal,
+  deleteVacationLocal,
+} from '@/lib/localMutations'
 import { getUsers } from '@/api/users'
 import { Layout } from '@/components/Layout'
 import { Button } from '@/components/ui/button'
@@ -17,10 +22,10 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
 import { useAuth } from '@/contexts/AuthContext'
-import { useToast } from '@/hooks/use-toast'
-import { isQueued } from '@/lib/pwa'
-import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight } from 'lucide-react'
+import { useSync } from '@/contexts/SyncContext'
+import { ArrowLeft, Plus, Trash2, Edit2, ArrowRight, ArrowUp, ArrowDown, ArrowUpDown, Search } from 'lucide-react'
 import { format } from 'date-fns'
 import type { ExpenseCategory } from '@/types'
 
@@ -33,26 +38,20 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'SEK
 export function VacationDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user, isAdmin } = useAuth()
-  const queryClient = useQueryClient()
-  const { toast } = useToast()
+  const { pendingCount } = useSync()
+  const navigate = useNavigate()
 
-  const { data: vacation, isLoading } = useQuery({
-    queryKey: ['vacation', id],
-    queryFn: () => getVacation(id!),
-  })
+  const vacation = useLiveQuery(() => db.vacations.get(id!), [id])
+  const expenses = useLiveQuery(
+    () => db.expenses.where('vacationId').equals(id!).toArray().then(list =>
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    ),
+    [id]
+  )
+  // Computed locally from IndexedDB expenses so totals and fair share always
+  // reflect the current local state on reload, even before/without a server sync.
 
-  const { data: expenses } = useQuery({
-    queryKey: ['expenses', id],
-    queryFn: () => getExpenses(id!),
-    enabled: !!vacation,
-  })
-
-  const { data: summary } = useQuery({
-    queryKey: ['summary', id],
-    queryFn: () => getSummary(id!),
-    enabled: !!vacation,
-  })
-
+  // Users list is admin-only and not needed offline — keep as server query
   const { data: allUsers } = useQuery({
     queryKey: ['users'],
     queryFn: getUsers,
@@ -70,145 +69,30 @@ export function VacationDetailPage() {
     category: 'Other' as ExpenseCategory,
     date: new Date().toISOString().split('T')[0],
   })
+  const [expenseSubmitting, setExpenseSubmitting] = useState(false)
+  const [splitMode, setSplitMode] = useState<'default' | 'custom'>('default')
+  const [splitWeights, setSplitWeights] = useState<Record<string, string>>({})
 
   // Participant dialog
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false)
   const [participantUserId, setParticipantUserId] = useState('')
-  const [participantWeight, setParticipantWeight] = useState('')
+  const [participantWeight, setParticipantWeight] = useState(50)
   const [editParticipantId, setEditParticipantId] = useState<string | null>(null)
+  const [participantSubmitting, setParticipantSubmitting] = useState(false)
 
-  const isCreator = vacation?.createdBy === user?.id
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
-  const offlineToast = () =>
-    toast({ title: 'Saved offline', description: 'Will sync automatically when you reconnect.' })
+  // Expense table view state — purely cosmetic, never affects summary calculations
+  // (those always run against the full, unfiltered `expenses` list).
+  const [expenseSearch, setExpenseSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | 'all'>('all')
+  const [paidByFilter, setPaidByFilter] = useState<string>('all')
+  const [sortField, setSortField] = useState<ExpenseSortField>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  const createExpenseMutation = useMutation({
-    mutationFn: (data: Parameters<typeof createExpense>[1]) => createExpense(id!, data),
-    onSuccess: (data) => {
-      setExpenseDialogOpen(false)
-      resetExpenseForm()
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const updateExpenseMutation = useMutation({
-    mutationFn: ({ expenseId, data }: { expenseId: string; data: Parameters<typeof updateExpense>[2] }) =>
-      updateExpense(id!, expenseId, data),
-    onSuccess: (data) => {
-      setExpenseDialogOpen(false)
-      setEditExpense(null)
-      resetExpenseForm()
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const deleteExpenseMutation = useMutation({
-    mutationFn: (expenseId: string) => deleteExpense(id!, expenseId),
-    onSuccess: (data) => {
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['expenses', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const addParticipantMutation = useMutation({
-    mutationFn: (data: { userId: string; splitWeight: number }) => addParticipant(id!, data),
-    onSuccess: (data) => {
-      setParticipantDialogOpen(false)
-      setParticipantUserId('')
-      setParticipantWeight('')
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const updateParticipantMutation = useMutation({
-    mutationFn: ({ userId, splitWeight }: { userId: string; splitWeight: number }) =>
-      updateParticipant(id!, userId, { splitWeight }),
-    onSuccess: (data) => {
-      setParticipantDialogOpen(false)
-      setEditParticipantId(null)
-      setParticipantWeight('')
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const removeParticipantMutation = useMutation({
-    mutationFn: (userId: string) => removeParticipant(id!, userId),
-    onSuccess: (data) => {
-      if (isQueued(data)) { offlineToast(); return }
-      queryClient.invalidateQueries({ queryKey: ['vacation', id] })
-      queryClient.invalidateQueries({ queryKey: ['summary', id] })
-    },
-  })
-
-  const resetExpenseForm = () => {
-    setExpenseForm({
-      paidByUserId: vacation?.participants[0]?.userId ?? '',
-      amount: '',
-      currency: vacation?.baseCurrency ?? 'EUR',
-      description: '',
-      category: 'Other',
-      date: new Date().toISOString().split('T')[0],
-    })
-  }
-
-  const handleOpenExpenseDialog = (expenseId?: string) => {
-    if (expenseId) {
-      const exp = expenses?.find((e) => e.id === expenseId)
-      if (exp) {
-        setExpenseForm({
-          paidByUserId: exp.paidByUserId,
-          amount: String(exp.amount),
-          currency: exp.currency,
-          description: exp.description,
-          category: exp.category as ExpenseCategory,
-          date: exp.date.split('T')[0],
-        })
-        setEditExpense(expenseId)
-      }
-    } else {
-      resetExpenseForm()
-      setEditExpense(null)
-    }
-    setExpenseDialogOpen(true)
-  }
-
-  const handleExpenseSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const data = {
-      paidByUserId: expenseForm.paidByUserId,
-      amount: parseFloat(expenseForm.amount),
-      currency: expenseForm.currency,
-      description: expenseForm.description,
-      category: expenseForm.category,
-      date: new Date(expenseForm.date).toISOString(),
-    }
-    if (editExpense) {
-      updateExpenseMutation.mutate({ expenseId: editExpense, data })
-    } else {
-      createExpenseMutation.mutate(data)
-    }
-  }
-
-  const handleParticipantSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const splitWeight = parseFloat(participantWeight)
-    if (editParticipantId) {
-      updateParticipantMutation.mutate({ userId: editParticipantId, splitWeight })
-    } else {
-      addParticipantMutation.mutate({ userId: participantUserId, splitWeight })
-    }
-  }
-
-  if (isLoading) {
+  // vacation === undefined means Dexie hasn't loaded yet; null/missing means not found
+  if (vacation === undefined) {
     return (
       <Layout>
         <div className="text-center py-12 text-muted-foreground">Loading...</div>
@@ -229,10 +113,146 @@ export function VacationDetailPage() {
     )
   }
 
+  const isCreator = vacation.createdBy === user?.id
   const canManage = isAdmin || isCreator
   const nonParticipantUsers = allUsers?.filter(
     (u) => !vacation.participants.some((p) => p.userId === u.id)
   ) ?? []
+
+  const vacationDefaultSplit = (): Record<string, string> =>
+    Object.fromEntries(vacation.participants.map(p => [p.userId, String(p.splitWeight)]))
+
+  const resetExpenseForm = () => {
+    setExpenseForm({
+      paidByUserId: vacation.participants.find(p => p.userId === user?.id)?.userId
+        ?? vacation.participants[0]?.userId
+        ?? '',
+      amount: '',
+      currency: vacation.baseCurrency,
+      description: '',
+      category: 'Other',
+      date: new Date().toISOString().split('T')[0],
+    })
+    setSplitMode('default')
+    setSplitWeights(vacationDefaultSplit())
+  }
+
+  const handleOpenExpenseDialog = (expenseId?: string) => {
+    if (expenseId) {
+      const exp = expenses?.find((e) => e.id === expenseId)
+      if (exp) {
+        setExpenseForm({
+          paidByUserId: exp.paidByUserId,
+          amount: String(exp.amount),
+          currency: exp.currency,
+          description: exp.description,
+          category: exp.category as ExpenseCategory,
+          date: exp.date.split('T')[0],
+        })
+        setEditExpense(expenseId)
+        if (exp.isSplitCustom && exp.splits.length > 0) {
+          setSplitMode('custom')
+          setSplitWeights(Object.fromEntries(exp.splits.map(s => [s.userId, String(s.weight)])))
+        } else {
+          setSplitMode('default')
+          setSplitWeights(vacationDefaultSplit())
+        }
+      }
+    } else {
+      resetExpenseForm()
+      setEditExpense(null)
+    }
+    setExpenseDialogOpen(true)
+  }
+
+  const splitWeightSum = Object.values(splitWeights).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+
+  const handleExpenseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (splitMode === 'custom' && Math.abs(splitWeightSum - 1) > 0.001) {
+      return
+    }
+    setExpenseSubmitting(true)
+    try {
+      const wasCustom = editExpense ? expenses?.find(e2 => e2.id === editExpense)?.isSplitCustom : false
+      const data = {
+        paidByUserId: expenseForm.paidByUserId,
+        amount: parseFloat(expenseForm.amount),
+        currency: expenseForm.currency,
+        description: expenseForm.description,
+        category: expenseForm.category,
+        date: new Date(expenseForm.date).toISOString(),
+        ...(splitMode === 'custom'
+          ? { splits: vacation.participants.map(p => ({ userId: p.userId, weight: parseFloat(splitWeights[p.userId] || '0') })) }
+          : wasCustom ? { resetSplit: true } : {}),
+      }
+      if (editExpense) {
+        await updateExpenseLocal(id!, editExpense, data, vacation)
+      } else {
+        await createExpenseLocal(id!, data, vacation)
+      }
+    } finally {
+      // Always close the dialog and reset — the local write already succeeded
+      // even if the background sync threw, so keeping the form open would be confusing.
+      setExpenseSubmitting(false)
+      setExpenseDialogOpen(false)
+      setEditExpense(null)
+      resetExpenseForm()
+    }
+  }
+
+  const handleParticipantSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setParticipantSubmitting(true)
+    try {
+      const splitWeight = participantWeight / 100
+      if (editParticipantId) {
+        await updateParticipantLocal(id!, editParticipantId, splitWeight)
+      } else {
+        const userInfo = allUsers?.find(u => u.id === participantUserId)
+        if (userInfo) {
+          await addParticipantLocal(id!, { userId: participantUserId, splitWeight }, userInfo)
+        }
+      }
+      setParticipantDialogOpen(false)
+      setEditParticipantId(null)
+      setParticipantUserId('')
+      setParticipantWeight(50)
+    } finally {
+      setParticipantSubmitting(false)
+    }
+  }
+
+  const handleDeleteVacation = async () => {
+    setDeleteSubmitting(true)
+    try {
+      await deleteVacationLocal(id!)
+      navigate('/')
+    } finally {
+      setDeleteSubmitting(false)
+    }
+  }
+
+  // Display-only view of `expenses` — search/filter/sort never touches the
+  // underlying list that computeSummary() runs against.
+  const visibleExpenses = expenses
+    ? sortExpenses(
+        filterExpenses(expenses, { search: expenseSearch, category: categoryFilter, paidByUserId: paidByFilter }),
+        sortField,
+        sortDir
+      )
+    : expenses
+
+  const toggleSort = (field: ExpenseSortField) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
+  const summary = expenses ? computeSummary(vacation, expenses) : undefined
 
   return (
     <Layout>
@@ -257,6 +277,17 @@ export function VacationDetailPage() {
               </span>
             </div>
           </div>
+          {canManage && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+              onClick={() => setDeleteDialogOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Vacation
+            </Button>
+          )}
         </div>
       </div>
 
@@ -277,58 +308,117 @@ export function VacationDetailPage() {
             </Button>
           </div>
 
-          {expenses && expenses.length === 0 && (
+          {expenses?.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               No expenses yet. Add the first one!
             </div>
           )}
 
           {expenses && expenses.length > 0 && (
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Paid By</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead className="text-right">In {vacation.baseCurrency}</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {expenses.map((expense) => (
-                    <TableRow key={expense.id}>
-                      <TableCell>{format(new Date(expense.date), 'MMM d, yyyy')}</TableCell>
-                      <TableCell>{expense.description}</TableCell>
-                      <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
-                      <TableCell>{expense.paidByUsername}</TableCell>
-                      <TableCell className="text-right">{expense.amount.toFixed(2)} {expense.currency}</TableCell>
-                      <TableCell className="text-right">{expense.amountInBaseCurrency.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1 justify-end">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenExpenseDialog(expense.id)}
+            <>
+              <div className="flex flex-wrap gap-3 mb-4">
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search description..."
+                    value={expenseSearch}
+                    onChange={(e) => setExpenseSearch(e.target.value)}
+                    className="pl-8"
+                  />
+                </div>
+                <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as ExpenseCategory | 'all')}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All categories</SelectItem>
+                    {EXPENSE_CATEGORIES.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={paidByFilter} onValueChange={setPaidByFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="Paid by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All payers</SelectItem>
+                    {vacation.participants.map((p) => (
+                      <SelectItem key={p.userId} value={p.userId}>{p.username}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {visibleExpenses?.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  No expenses match your search/filters.
+                </div>
+              )}
+
+              {visibleExpenses && visibleExpenses.length > 0 && (
+                <Card>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {SORT_COLUMNS.map(({ field, label }) => (
+                          <TableHead
+                            key={field}
+                            className={`cursor-pointer select-none ${field === 'amount' || field === 'amountBase' ? 'text-right' : ''}`}
+                            onClick={() => toggleSort(field)}
                           >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteExpenseMutation.mutate(expense.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
+                            <span className={`inline-flex items-center gap-1 ${field === 'amount' || field === 'amountBase' ? 'justify-end w-full' : ''}`}>
+                              {label === 'In Base Currency' ? `In ${vacation.baseCurrency}` : label}
+                              {sortField === field ? (
+                                sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                              ) : (
+                                <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
+                              )}
+                            </span>
+                          </TableHead>
+                        ))}
+                        <TableHead></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visibleExpenses.map((expense) => (
+                        <TableRow key={expense.id}>
+                          <TableCell>{format(new Date(expense.date), 'MMM d, yyyy')}</TableCell>
+                          <TableCell>
+                            {expense.description}
+                            {expense.isSplitCustom && (
+                              <Badge variant="secondary" className="ml-2 text-xs">Custom split</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
+                          <TableCell>{expense.paidByUsername}</TableCell>
+                          <TableCell className="text-right">{expense.amount.toFixed(2)} {expense.currency}</TableCell>
+                          <TableCell className="text-right">{expense.amountInBaseCurrency.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1 justify-end">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleOpenExpenseDialog(expense.id)}
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteExpenseLocal(id!, expense.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              )}
+            </>
           )}
         </TabsContent>
 
@@ -340,7 +430,7 @@ export function VacationDetailPage() {
               <Button onClick={() => {
                 setEditParticipantId(null)
                 setParticipantUserId('')
-                setParticipantWeight('')
+                setParticipantWeight(Math.round(100 / (vacation.participants.length + 1)))
                 setParticipantDialogOpen(true)
               }}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -375,7 +465,7 @@ export function VacationDetailPage() {
                             size="icon"
                             onClick={() => {
                               setEditParticipantId(p.userId)
-                              setParticipantWeight(String(p.splitWeight))
+                              setParticipantWeight(Math.round(p.splitWeight * 100))
                               setParticipantDialogOpen(true)
                             }}
                           >
@@ -385,7 +475,7 @@ export function VacationDetailPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => removeParticipantMutation.mutate(p.userId)}
+                              onClick={() => removeParticipantLocal(id!, p.userId)}
                             >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
@@ -407,6 +497,11 @@ export function VacationDetailPage() {
         {/* SUMMARY TAB */}
         <TabsContent value="summary">
           <div className="mt-4 space-y-6">
+            {pendingCount > 0 && (
+              <p className="text-sm text-amber-600">
+                {pendingCount} change{pendingCount !== 1 ? 's' : ''} pending sync — totals already reflect them locally.
+              </p>
+            )}
             {summary && (
               <>
                 <Card>
@@ -460,10 +555,7 @@ export function VacationDetailPage() {
                     <CardContent>
                       <div className="space-y-2">
                         {summary.transfers.map((t, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center gap-3 p-3 rounded-md border"
-                          >
+                          <div key={i} className="flex items-center gap-3 p-3 rounded-md border">
                             <span className="font-medium">{t.fromUsername}</span>
                             <ArrowRight className="h-4 w-4 text-muted-foreground" />
                             <span className="font-medium">{t.toUsername}</span>
@@ -485,6 +577,11 @@ export function VacationDetailPage() {
                   </Card>
                 )}
               </>
+            )}
+            {!summary && (
+              <div className="text-center py-12 text-muted-foreground">
+                Loading...
+              </div>
             )}
           </div>
         </TabsContent>
@@ -560,9 +657,59 @@ export function VacationDetailPage() {
                 />
               </div>
             </div>
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex items-center justify-between">
+                <Label>Split</Label>
+                {splitMode === 'default' ? (
+                  <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setSplitMode('custom')}>
+                    Customize for this expense
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0"
+                    onClick={() => { setSplitMode('default'); setSplitWeights(vacationDefaultSplit()) }}
+                  >
+                    Reset to vacation default
+                  </Button>
+                )}
+              </div>
+              {splitMode === 'default' ? (
+                <p className="text-xs text-muted-foreground">
+                  Follows the vacation's split — updates automatically if it changes.
+                </p>
+              ) : (
+                <>
+                  {vacation.participants.map((p) => {
+                    const pct = Math.round((parseFloat(splitWeights[p.userId] ?? '0')) * 100)
+                    return (
+                      <div key={p.userId} className="flex items-center gap-3">
+                        <span className="text-sm w-24 shrink-0 truncate">{p.username}</span>
+                        <Slider
+                          value={[pct]}
+                          min={0}
+                          max={100}
+                          step={1}
+                          onValueChange={([v]) =>
+                            setSplitWeights((w) => redistributeSplit(w, p.userId, v / 100))
+                          }
+                          className="flex-1"
+                        />
+                        <span className="text-sm w-12 text-right tabular-nums">{pct}%</span>
+                      </div>
+                    )
+                  })}
+                  <p className="text-xs text-muted-foreground">
+                    Total: {Math.round(splitWeightSum * 100)}%
+                  </p>
+                </>
+              )}
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setExpenseDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createExpenseMutation.isPending || updateExpenseMutation.isPending}>
+              <Button type="submit" disabled={expenseSubmitting || (splitMode === 'custom' && Math.abs(splitWeightSum - 1) > 0.001)}>
                 {editExpense ? 'Save Changes' : 'Add Expense'}
               </Button>
             </DialogFooter>
@@ -590,27 +737,55 @@ export function VacationDetailPage() {
                 </Select>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>Split Weight (0.0 – 1.0)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0.01"
-                max="1"
-                value={participantWeight}
-                onChange={(e) => setParticipantWeight(e.target.value)}
-                placeholder="0.5"
-                required
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <Label>Split Weight</Label>
+                <span className="text-sm font-medium tabular-nums">{participantWeight}%</span>
+              </div>
+              <Slider
+                value={[participantWeight]}
+                min={1}
+                max={100}
+                step={1}
+                onValueChange={([v]) => setParticipantWeight(v)}
               />
-              <p className="text-xs text-muted-foreground">All participants' weights should sum to 1.0</p>
+              {(() => {
+                const otherSum = vacation.participants
+                  .filter(p => p.userId !== editParticipantId)
+                  .reduce((s, p) => s + p.splitWeight, 0)
+                const total = Math.round((otherSum + participantWeight / 100) * 100)
+                return (
+                  <p className={`text-xs ${total === 100 ? 'text-muted-foreground' : 'text-amber-500'}`}>
+                    Total across all participants: {total}%{total !== 100 ? ' — adjust other weights to reach 100%' : ''}
+                  </p>
+                )
+              })()}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setParticipantDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={addParticipantMutation.isPending || updateParticipantMutation.isPending}>
+              <Button type="submit" disabled={participantSubmitting}>
                 {editParticipantId ? 'Save' : 'Add'}
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Vacation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Vacation</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">
+            Are you sure you want to delete "{vacation.name}"? All expenses will be permanently removed.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={deleteSubmitting} onClick={handleDeleteVacation}>
+              Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Layout>

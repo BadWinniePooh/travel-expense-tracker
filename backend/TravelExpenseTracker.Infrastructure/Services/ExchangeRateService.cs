@@ -27,8 +27,9 @@ public class ExchangeRateService : IExchangeRateService
         var to = toCurrency.ToUpperInvariant();
 
         // Check cache
+        var cutoff = DateTime.UtcNow - CacheDuration;
         var cached = await _context.ExchangeRates
-            .Where(r => r.FromCurrency == from && r.ToCurrency == to && r.FetchedAt > DateTime.UtcNow.Subtract(CacheDuration))
+            .Where(r => r.FromCurrency == from && r.ToCurrency == to && r.FetchedAt > cutoff)
             .OrderByDescending(r => r.FetchedAt)
             .FirstOrDefaultAsync();
 

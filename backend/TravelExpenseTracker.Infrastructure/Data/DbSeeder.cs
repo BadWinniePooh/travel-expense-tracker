@@ -13,6 +13,12 @@ public static class DbSeeder
         // stale migration records left over from failed previous runs.
         await context.Database.EnsureCreatedAsync();
 
+        // EnsureCreated does NOT retrofit schema changes onto a database that
+        // already existed (e.g. adding the ExpenseSplits table for an
+        // already-deployed instance), so newly-added tables must be created
+        // explicitly and idempotently here.
+        await EnsureExpenseSplitsTableAsync(context);
+
         if (await context.Users.AnyAsync())
             return;
 
@@ -32,5 +38,19 @@ public static class DbSeeder
 
         context.Users.Add(admin);
         await context.SaveChangesAsync();
+    }
+
+    private static async Task EnsureExpenseSplitsTableAsync(AppDbContext context)
+    {
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""ExpenseSplits"" (
+                ""ExpenseId"" uuid NOT NULL,
+                ""UserId"" uuid NOT NULL,
+                ""Weight"" numeric(10,6) NOT NULL,
+                CONSTRAINT ""PK_ExpenseSplits"" PRIMARY KEY (""ExpenseId"", ""UserId""),
+                CONSTRAINT ""FK_ExpenseSplits_Expenses_ExpenseId"" FOREIGN KEY (""ExpenseId"") REFERENCES ""Expenses"" (""Id"") ON DELETE CASCADE,
+                CONSTRAINT ""FK_ExpenseSplits_Users_UserId"" FOREIGN KEY (""UserId"") REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT
+            );
+        ");
     }
 }

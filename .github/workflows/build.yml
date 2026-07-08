@@ -28,9 +28,17 @@ jobs:
       - name: Build
         run: dotnet build TravelExpenseTracker.sln --no-restore -c Release
 
-      - name: Test
-        run: dotnet test TravelExpenseTracker.sln --no-build -c Release --logger trx --results-directory TestResults
-        continue-on-error: true  # no test project yet; remove when tests are added
+      - name: Test (with coverage thresholds)
+        run: >-
+          dotnet test TravelExpenseTracker.sln --no-build -c Release
+          --logger trx --results-directory TestResults
+          /p:CollectCoverage=true
+          /p:CoverageOutputFormat=cobertura
+          '/p:Include=[TravelExpenseTracker.API]*%2C[TravelExpenseTracker.Infrastructure]TravelExpenseTracker.Infrastructure.Services.*'
+          '/p:ExcludeByFile=**/Program.cs'
+          /p:Threshold=80
+          /p:ThresholdType=line
+          /p:ThresholdStat=Minimum
 
   build-frontend:
     name: Build & Test Frontend
@@ -55,5 +63,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test
-        run: npm test -- --passWithNoTests
+      - name: Test (with coverage thresholds)
+        run: npm run test:coverage

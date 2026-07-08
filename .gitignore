@@ -15,6 +15,7 @@ TestResults/
 node_modules/
 dist/
 .cache/
+coverage/
 
 # Docker volumes
 pgdata/
