@@ -1,10 +1,10 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
 RUN dotnet restore TravelExpenseTracker.sln && \
     dotnet publish TravelExpenseTracker.API/TravelExpenseTracker.API.csproj -c Release -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 # Upgrade all OS packages to pick up the latest security patches from the
 # Debian 12 repository before any application files are copied in.
 RUN apt-get update && \
