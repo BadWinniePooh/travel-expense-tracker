@@ -33,7 +33,7 @@ x-backend-env: &backend-env
 services:
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     # No user override: postgres image entrypoint must start as root to
     # chmod/chown the data directory, then drops to its internal user automatically.
     environment:

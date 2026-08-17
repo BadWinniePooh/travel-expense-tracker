@@ -8,7 +8,7 @@
 #   cp .env.example .env   # then edit .env with your values
 
 x-postgres-base: &postgres-base
-  image: postgres:16-alpine
+  image: postgres:18-alpine
   # No user override: the postgres image entrypoint must start as root to
   # chmod/chown the data directory, then it drops to the internal postgres
   # user (UID 70 on Alpine) automatically. Forcing a non-root user here
