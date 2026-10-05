@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<Expense> Expenses => Set<Expense>();
     public DbSet<ExpenseSplit> ExpenseSplits => Set<ExpenseSplit>();
     public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
+    public DbSet<Repayment> Repayments => Set<Repayment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -90,6 +91,23 @@ public class AppDbContext : DbContext
             entity.HasKey(er => er.Id);
             entity.HasIndex(er => new { er.FromCurrency, er.ToCurrency });
             entity.Property(er => er.Rate).HasPrecision(18, 6);
+        });
+
+        // Repayment
+        modelBuilder.Entity<Repayment>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasOne(r => r.FromUser)
+                  .WithMany()
+                  .HasForeignKey(r => r.FromUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(r => r.ToUser)
+                  .WithMany()
+                  .HasForeignKey(r => r.ToUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(r => r.Amount).HasPrecision(18, 4);
+            entity.Property(r => r.Currency).HasMaxLength(3);
+            entity.Property(r => r.Note).HasMaxLength(500);
         });
     }
 }

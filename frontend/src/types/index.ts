@@ -84,3 +84,32 @@ export type ExpenseCategory =
   | 'Shopping'
   | 'Healthcare'
   | 'Other'
+
+// Net amount the debtor owes the creditor across all vacations, after repayments
+export interface PairBalance {
+  debtorUserId: string
+  debtorUsername: string
+  creditorUserId: string
+  creditorUsername: string
+  amount: number
+}
+
+export interface Repayment {
+  id: string
+  fromUserId: string
+  fromUsername: string
+  toUserId: string
+  toUsername: string
+  amount: number
+  currency: string
+  note?: string | null
+  date: string
+  createdByUserId: string
+  createdAt: string
+}
+
+export interface Balances {
+  currency: string
+  pairs: PairBalance[]
+  repayments: Repayment[]
+}

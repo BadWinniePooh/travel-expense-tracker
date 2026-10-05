@@ -7,6 +7,7 @@ public interface IVacationRepository
     Task<Vacation?> GetByIdAsync(Guid id);
     Task<Vacation?> GetByIdWithDetailsAsync(Guid id);
     Task<IEnumerable<Vacation>> GetByUserIdAsync(Guid userId);
+    Task<IEnumerable<Vacation>> GetAllWithParticipantsAsync();
     Task<Vacation> CreateAsync(Vacation vacation);
     Task<Vacation> UpdateAsync(Vacation vacation);
     Task DeleteAsync(Guid id);

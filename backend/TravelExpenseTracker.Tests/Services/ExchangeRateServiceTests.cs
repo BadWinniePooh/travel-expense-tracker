@@ -199,4 +199,40 @@ public class ExchangeRateServiceTests
 
         result.Should().Be(123.45m);
     }
+
+    [Fact]
+    public async Task GetHistoricalRateAsync_SameCurrency_ReturnsOne()
+    {
+        var (svc, _) = MakeService();
+
+        var rate = await svc.GetHistoricalRateAsync("USD", "usd", new DateTime(2020, 1, 1));
+
+        rate.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task GetHistoricalRateAsync_PastDate_FetchesRateForThatDay()
+    {
+        var (svc, context) = MakeService(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"rates":{"CHF":0.91}}""")
+        });
+
+        var rate = await svc.GetHistoricalRateAsync("SEK", "CHF", new DateTime(2020, 3, 4, 15, 30, 0));
+
+        rate.Should().Be(0.91m);
+        // Historical lookups use the in-process cache, not the latest-rate table.
+        context.ExchangeRates.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHistoricalRateAsync_FutureDate_UsesLatestRate()
+    {
+        var (svc, context) = MakeService();
+
+        var rate = await svc.GetHistoricalRateAsync("USD", "EUR", DateTime.UtcNow.AddDays(10));
+
+        rate.Should().Be(0.85m);
+        context.ExchangeRates.Should().ContainSingle();
+    }
 }

@@ -19,6 +19,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IVacationRepository, VacationRepository>();
 builder.Services.AddScoped<IExpenseRepository, ExpenseRepository>();
+builder.Services.AddScoped<IRepaymentRepository, RepaymentRepository>();
 
 // Services
 builder.Services.AddScoped<IExchangeRateService, ExchangeRateService>();

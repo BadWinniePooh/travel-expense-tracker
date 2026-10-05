@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useSync } from '@/contexts/SyncContext'
 import { Button } from '@/components/ui/button'
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
-import { Plane, LogOut, Users, Home, KeyRound, Menu, X, WifiOff, Clock } from 'lucide-react'
+import { Plane, LogOut, Users, Home, KeyRound, Menu, X, WifiOff, Clock, Scale } from 'lucide-react'
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, isAdmin } = useAuth()
@@ -29,6 +29,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const navLinks = [
     { to: '/', label: 'Dashboard', icon: <Home className="h-4 w-4" /> },
+    { to: '/balances', label: 'Balances', icon: <Scale className="h-4 w-4" /> },
     ...(isAdmin ? [{ to: '/admin/users', label: 'Users', icon: <Users className="h-4 w-4" /> }] : []),
   ]
 
