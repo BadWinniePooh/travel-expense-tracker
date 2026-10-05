@@ -38,6 +38,7 @@ x-backend-env: &backend-env
   ADMIN_USERNAME: ${ADMIN_USERNAME}
   ADMIN_PASSWORD: ${ADMIN_PASSWORD}
   ADMIN_EMAIL: ${ADMIN_EMAIL}
+  Dashboard__Currency: ${DASHBOARD_CURRENCY:-EUR}
   ASPNETCORE_URLS: "http://+:8080"
 
 x-frontend-base: &frontend-base

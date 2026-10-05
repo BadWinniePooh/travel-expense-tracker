@@ -106,6 +106,7 @@ See `.env.example` for all required variables.
 | `ADMIN_USERNAME` | Default admin username (seeded on first run) |
 | `ADMIN_PASSWORD` | Default admin password |
 | `ADMIN_EMAIL` | Default admin email |
+| `Dashboard__Currency` | Currency of the Balances page and repayments (default `EUR`; `DASHBOARD_CURRENCY` in `.env`) |
 
 ## API Endpoints
 
@@ -140,6 +141,13 @@ See `.env.example` for all required variables.
 | DELETE | `/api/vacations/{id}/expenses/{expenseId}` | Delete expense |
 | GET | `/api/vacations/{id}/summary` | Settlement summary |
 
+### Balances
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/balances` | Pairwise net balances across all vacations plus repayment history (members: own pairs only; admins: everyone) |
+| POST | `/api/balances/repayments` | Record that one person paid another back (payer, receiver or admin) |
+| DELETE | `/api/balances/repayments/{id}` | Delete a repayment (creator or admin) |
+
 ## Settlement Algorithm
 
 The `/summary` endpoint calculates who owes whom:
@@ -148,6 +156,15 @@ The `/summary` endpoint calculates who owes whom:
 2. For each participant: `fair_share = total * split_weight`.
 3. `balance = total_paid - fair_share` (positive = overpaid, negative = underpaid).
 4. Greedy matching: pair the largest debtor with the largest creditor until settled.
+
+## Balances Across Vacations
+
+The `/balances` endpoint (Balances page) nets what people owe each other across **all** vacations:
+
+1. Each expense creates a debt from every participant to the payer (their share, using the custom split if set, otherwise the participants' split weights).
+2. Amounts are converted from the vacation's base currency into `Dashboard__Currency` at the exchange rate of the expense date, so totals don't drift from day to day.
+3. Debts between each pair are netted into one direction.
+4. Repayments ("A paid B") are subtracted; a repayment larger than the debt flips the direction.
 
 ## Currency Conversion
 

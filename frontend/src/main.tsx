@@ -11,6 +11,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { NewVacationPage } from './pages/NewVacationPage'
 import { VacationDetailPage } from './pages/VacationDetailPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
+import { BalancesPage } from './pages/BalancesPage'
 import { Toaster } from './components/ui/toaster'
 import { registerSW } from './lib/pwa'
 import './index.css'
@@ -56,6 +57,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 element={
                   <ProtectedRoute>
                     <VacationDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/balances"
+                element={
+                  <ProtectedRoute>
+                    <BalancesPage />
                   </ProtectedRoute>
                 }
               />

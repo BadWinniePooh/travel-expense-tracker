@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TravelExpenseTracker.Core.Interfaces;
@@ -11,6 +13,7 @@ public class ExchangeRateService : IExchangeRateService
     private readonly AppDbContext _context;
     private readonly HttpClient _httpClient;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromHours(1);
+    private static readonly ConcurrentDictionary<(string From, string To, DateTime Date), decimal> HistoricalCache = new();
 
     public ExchangeRateService(AppDbContext context, IHttpClientFactory httpClientFactory)
     {
@@ -57,6 +60,34 @@ public class ExchangeRateService : IExchangeRateService
         _context.ExchangeRates.Add(exchangeRate);
         await _context.SaveChangesAsync();
 
+        return rate;
+    }
+
+    public async Task<decimal> GetHistoricalRateAsync(string fromCurrency, string toCurrency, DateTime date)
+    {
+        if (fromCurrency.Equals(toCurrency, StringComparison.OrdinalIgnoreCase))
+            return 1m;
+
+        // Today and future dates have no final rate yet; use the latest one.
+        var day = date.Date;
+        if (day >= DateTime.UtcNow.Date)
+            return await GetRateAsync(fromCurrency, toCurrency);
+
+        var from = fromCurrency.ToUpperInvariant();
+        var to = toCurrency.ToUpperInvariant();
+
+        if (HistoricalCache.TryGetValue((from, to, day), out var cached))
+            return cached;
+
+        var response = await _httpClient.GetAsync(
+            $"https://api.frankfurter.app/{day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}?from={from}&to={to}");
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        var rate = doc.RootElement.GetProperty("rates").GetProperty(to).GetDecimal();
+
+        HistoricalCache[(from, to, day)] = rate;
         return rate;
     }
 

@@ -18,6 +18,7 @@ public static class DbSeeder
         // already-deployed instance), so newly-added tables must be created
         // explicitly and idempotently here.
         await EnsureExpenseSplitsTableAsync(context);
+        await EnsureRepaymentsTableAsync(context);
 
         if (await context.Users.AnyAsync())
             return;
@@ -51,6 +52,28 @@ public static class DbSeeder
                 CONSTRAINT ""FK_ExpenseSplits_Expenses_ExpenseId"" FOREIGN KEY (""ExpenseId"") REFERENCES ""Expenses"" (""Id"") ON DELETE CASCADE,
                 CONSTRAINT ""FK_ExpenseSplits_Users_UserId"" FOREIGN KEY (""UserId"") REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT
             );
+        ");
+    }
+
+    private static async Task EnsureRepaymentsTableAsync(AppDbContext context)
+    {
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""Repayments"" (
+                ""Id"" uuid NOT NULL,
+                ""FromUserId"" uuid NOT NULL,
+                ""ToUserId"" uuid NOT NULL,
+                ""Amount"" numeric(18,4) NOT NULL,
+                ""Currency"" character varying(3) NOT NULL,
+                ""Note"" character varying(500) NULL,
+                ""Date"" timestamp with time zone NOT NULL,
+                ""CreatedByUserId"" uuid NOT NULL,
+                ""CreatedAt"" timestamp with time zone NOT NULL,
+                CONSTRAINT ""PK_Repayments"" PRIMARY KEY (""Id""),
+                CONSTRAINT ""FK_Repayments_Users_FromUserId"" FOREIGN KEY (""FromUserId"") REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
+                CONSTRAINT ""FK_Repayments_Users_ToUserId"" FOREIGN KEY (""ToUserId"") REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_Repayments_FromUserId"" ON ""Repayments"" (""FromUserId"");
+            CREATE INDEX IF NOT EXISTS ""IX_Repayments_ToUserId"" ON ""Repayments"" (""ToUserId"");
         ");
     }
 }

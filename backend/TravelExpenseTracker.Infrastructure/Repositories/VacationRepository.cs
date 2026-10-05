@@ -32,6 +32,12 @@ public class VacationRepository : IVacationRepository
             .OrderByDescending(v => v.StartDate)
             .ToListAsync();
 
+    public async Task<IEnumerable<Vacation>> GetAllWithParticipantsAsync() =>
+        await _context.Vacations
+            .Include(v => v.Participants).ThenInclude(p => p.User)
+            .OrderByDescending(v => v.StartDate)
+            .ToListAsync();
+
     public async Task<Vacation> CreateAsync(Vacation vacation)
     {
         _context.Vacations.Add(vacation);
